@@ -1,0 +1,360 @@
+/* =========================================================
+ *  base.css — 全局变量、Reset、工具栏、通用按钮、通用动画
+ *  1:1 从 style.css 拆分，视觉零改动
+ *  🎨 全局暗黑极简滚动条美化
+ *  🎨 升级：难度下拉框 option 深色背景 + select 颜色过渡
+ * ========================================================= */
+
+/* ---------------- 根变量 ---------------- */
+
+:root {
+  --bg: #0b1017;
+  --panel: #1a2332;
+  --panel-2: #141d2a;
+  --panel-side: #0d141f;
+  --accent: #3d8bfd;
+  --accent-hover: #5aa0ff;
+  --text: #e8eef7;
+  --muted: #93a4bb;
+  --node: #141e30;
+  --node-border: #5aa0ff;
+  --handle: #7dd3fc;
+  --line: #2c3f59;
+  --dot: #22304a;
+  --danger: #fe4c61;
+}
+
+/* ---------------- Reset ---------------- */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  height: 100vh;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+/* =========================================================
+ *  🎨 全局暗黑极简滚动条美化
+ * ========================================================= */
+
+* {
+  scrollbar-width: thin !important;
+  scrollbar-color: #334155 transparent !important;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 999px;
+  transition: background 140ms ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* =========================================================
+ *  🎨 全局下拉框 option：深色背景 + 难度专属色
+ *  - 覆盖工具栏筛选 & 表单字段
+ *  - 具体文字颜色由 JS 内联 style.color 覆盖（见 editor.js / app.js）
+ * ========================================================= */
+
+select option {
+  background: #101827;
+  color: #e8eef7;
+  font-weight: 650;
+  padding: 6px 10px;
+}
+
+/* select 自身：颜色平滑过渡，避免变色瞬间突兀 */
+.toolbar-filter-select,
+.field select,
+.drawer-sort-select {
+  transition: color 180ms ease, border-color 180ms ease,
+    box-shadow 140ms ease, background 140ms ease;
+}
+
+/* =========================================================
+ *  主区域
+ * ========================================================= */
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid #2a3a4f;
+  flex-wrap: wrap;
+  z-index: 12;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+}
+
+.sidebar-toggle {
+  appearance: none;
+  border: 1px solid var(--line);
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  border-color: #3d5470;
+}
+
+/* =========================================================
+ *  工具栏搜索框 + 难度筛选
+ * ========================================================= */
+
+.toolbar-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 160px;
+  max-width: 400px;
+}
+
+.toolbar-search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12.5px;
+  line-height: 1;
+  opacity: 0.65;
+  pointer-events: none;
+  user-select: none;
+}
+
+.toolbar-search-input {
+  width: 100%;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  background: #101827;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 32px 9px 33px;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.toolbar-search-input::placeholder {
+  color: #5c6c82;
+}
+
+.toolbar-search-input:hover {
+  border-color: #3d5470;
+}
+
+.toolbar-search-input:focus {
+  border-color: var(--accent);
+  background: #0d1522;
+  box-shadow: 0 0 0 3px rgba(61, 139, 253, 0.22);
+}
+
+.toolbar-search-clear {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  transition: background 130ms ease, color 130ms ease;
+}
+
+.toolbar-search-clear[hidden] {
+  display: none;
+}
+
+.toolbar-search-clear:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.toolbar-filter-select {
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background-color: #101827;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 28px 9px 12px;
+  outline: none;
+  cursor: pointer;
+  min-width: 124px;
+  flex-shrink: 0;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+  background-image: linear-gradient(45deg, transparent 50%, #93a4bb 50%),
+    linear-gradient(135deg, #93a4bb 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.toolbar-filter-select:hover {
+  border-color: #3d5470;
+}
+
+.toolbar-filter-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(61, 139, 253, 0.22);
+}
+
+.toolbar-filter-select option {
+  background: #101827;
+  color: var(--text);
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* =========================================================
+ *  通用按钮
+ * ========================================================= */
+
+.btn {
+  appearance: none;
+  border: none;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 9px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease,
+    transform 80ms ease, box-shadow 140ms ease;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, #4d95ff, #2f7ae8);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(61, 139, 253, 0.32);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(180deg, #5aa0ff, #3d8bfd);
+  box-shadow: 0 6px 18px rgba(61, 139, 253, 0.45);
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.btn-ghost:hover {
+  color: var(--text);
+  border-color: #3d5470;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-danger {
+  background: rgba(254, 76, 97, 0.12);
+  color: #ff8a95;
+  border: 1px solid rgba(254, 76, 97, 0.35);
+}
+
+.btn-danger:hover {
+  background: rgba(254, 76, 97, 0.22);
+  border-color: var(--danger);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(254, 76, 97, 0.32);
+}
+
+/* =========================================================
+ *  通用动画
+ * ========================================================= */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
