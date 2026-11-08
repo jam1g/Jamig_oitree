@@ -189,6 +189,12 @@
   CanvasAPI.setOnSceneChange(refreshSceneUI);
   EditorAPI.setEditorOnSceneChange(refreshSceneUI);
 
+  /* ☁️ 云端数据应用后：重新加载画布并刷新侧栏 / 抽屉 / 搜索 */
+  window.addEventListener("oitree:state-applied", function () {
+    CanvasAPI.loadActiveCategory();
+    refreshSceneUI();
+  });
+
   CanvasAPI.setNodeClickHandler(EditorAPI.openProblemModal);
   CanvasAPI.setNoteClickHandler(EditorAPI.openReaderModal);
 
@@ -990,11 +996,13 @@
   function isAnyModalOpen() {
     var zenModalEl = document.getElementById("zen-modal");
     var readerModalEl = document.getElementById("reader-modal");
+    var authModalEl = document.getElementById("auth-modal");
     return (
       !modal.hidden ||
       !catModal.hidden ||
       (zenModalEl && !zenModalEl.hidden) ||
-      (readerModalEl && !readerModalEl.hidden)
+      (readerModalEl && !readerModalEl.hidden) ||
+      (authModalEl && !authModalEl.hidden)
     );
   }
 
@@ -1026,6 +1034,9 @@
     }
 
     if (event.key === "Escape") {
+      /* auth.js 已处理（例如关闭登录弹窗）则不再执行全局 Esc 逻辑 */
+      if (event.defaultPrevented) return;
+
       var zenModalEl = document.getElementById("zen-modal");
       var readerModalEl = document.getElementById("reader-modal");
 

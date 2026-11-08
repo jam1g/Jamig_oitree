@@ -1067,53 +1067,266 @@ window.OITreeCanvas = (function () {
       byLayer[layer.get(lid) || 0].push(lid);
     }
 
-    function median(arr) {
-      if (!arr.length) return null;
-      var sorted = arr.slice().sort(function (a, b) { return a - b; });
-      var mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2
-        ? sorted[mid]
-        : (sorted[mid - 1] + sorted[mid]) / 2;
-    }
-
-    function compareBy(refMap, refOrder) {
-      return function (a, b) {
-        var pos = new Map(refOrder.map(function (id, idx) { return [id, idx]; }));
-        var ma = median(
-          (refMap.get(a) || []).map(function (id) { return pos.get(id); })
-            .filter(function (v) { return v !== undefined; })
-        );
-        var mb = median(
-          (refMap.get(b) || []).map(function (id) { return pos.get(id); })
-            .filter(function (v) { return v !== undefined; })
-        );
-        if (ma === null && mb === null) return 0;
-        if (ma === null) return 1;
-        if (mb === null) return -1;
-        return ma - mb;
-      };
-    }
-
-    for (var pass = 0; pass < 6; pass++) {
-      for (var p1i = 1; p1i < byLayer.length; p1i++) {
-        byLayer[p1i].sort(compareBy(pred, byLayer[p1i - 1]));
+    /* =========================================================
+     * 4. 交叉数计算：给定上层顺序和下层顺序，计算连线交叉对数
+     *    若上层边 (u1,v1) 在左，下层对应边 (u2,v2) 在右（或反之），则判定交叉。
+     * ========================================================= */
+    function countCrossings(upperOrder, lowerOrder, edges) {
+      var upperPos = new Map();
+      for (var i = 0; i < upperOrder.length; i++) {
+        upperPos.set(upperOrder[i], i);
       }
-      for (var p2i = byLayer.length - 2; p2i >= 0; p2i--) {
-        byLayer[p2i].sort(compareBy(succ, byLayer[p2i + 1]));
+      var lowerPos = new Map();
+      for (var i = 0; i < lowerOrder.length; i++) {
+        lowerPos.set(lowerOrder[i], i);
       }
+
+      var edgeList = [];
+      for (var e = 0; e < edges.length; e++) {
+        var link = edges[e];
+        if (upperPos.has(link.from) && lowerPos.has(link.to)) {
+          edgeList.push({ u: upperPos.get(link.from), v: lowerPos.get(link.to) });
+        }
+      }
+
+      var crossings = 0;
+      for (var i = 0; i < edgeList.length; i++) {
+        for (var j = i + 1; j < edgeList.length; j++) {
+          var a = edgeList[i], b = edgeList[j];
+          if ((a.u < b.u && a.v > b.v) || (a.u > b.u && a.v < b.v)) {
+            crossings++;
+          }
+        }
+      }
+      return crossings;
     }
 
-    var colGap = NODE_W + 56;
-    var rowGap = NODE_H + 92;
-    var totalHeight = (byLayer.length - 1) * rowGap;
+    /* =========================================================
+     * 5. 生成所有排列（用于穷举最优顺序）
+     * ========================================================= */
+    function permute(arr, callback) {
+      var used = new Array(arr.length);
+      for (var i = 0; i < arr.length; i++) used[i] = false;
+      var current = [];
+      function backtrack() {
+        if (current.length === arr.length) {
+          callback(current.slice());
+          return;
+        }
+        for (var i = 0; i < arr.length; i++) {
+          if (!used[i]) {
+            used[i] = true;
+            current.push(arr[i]);
+            backtrack();
+            current.pop();
+            used[i] = false;
+          }
+        }
+      }
+      backtrack();
+    }
 
+    /* =========================================================
+     * 6. 贪心插入：将下层节点逐个插入到当前序列的最佳位置
+     *    每次选择使交叉数增加最少的插入位置
+     * ========================================================= */
+    function greedyInsert(upperOrder, nodes, edges) {
+      var order = [];
+      var remaining = nodes.slice();
+      while (remaining.length > 0) {
+        var bestNode = null;
+        var bestPos = 0;
+        var bestCrossings = Infinity;
+        for (var r = 0; r < remaining.length; r++) {
+          var node = remaining[r];
+          for (var p = 0; p <= order.length; p++) {
+            var trial = order.slice();
+            trial.splice(p, 0, node);
+            var c = countCrossings(upperOrder, trial, edges);
+            if (c < bestCrossings) {
+              bestCrossings = c;
+              bestNode = node;
+              bestPos = p;
+            }
+          }
+        }
+        order.splice(bestPos, 0, bestNode);
+        remaining = remaining.filter(function (n) { return n !== bestNode; });
+      }
+      return order;
+    }
+
+    /* =========================================================
+     * 7. 局部交换优化：尝试交换任意两个位置的节点，若能减少交叉则交换
+     * ========================================================= */
+    function localSwapOptimize(upperOrder, order, edges, maxIter) {
+      var current = order.slice();
+      var currentCrossings = countCrossings(upperOrder, current, edges);
+      var improved = true;
+      var iter = 0;
+      while (improved && iter < maxIter) {
+        improved = false;
+        iter++;
+        for (var i = 0; i < current.length; i++) {
+          for (var j = i + 1; j < current.length; j++) {
+            var trial = current.slice();
+            var tmp = trial[i]; trial[i] = trial[j]; trial[j] = tmp;
+            var c = countCrossings(upperOrder, trial, edges);
+            if (c < currentCrossings) {
+              current = trial;
+              currentCrossings = c;
+              improved = true;
+              break;
+            }
+          }
+          if (improved) break;
+        }
+      }
+      return current;
+    }
+
+    /* =========================================================
+     * 8. 查找下层最优顺序：固定上层顺序，对下层寻找交叉数最少的排列
+     *    - 节点数 <= 8：穷举所有排列，严格最优（零交叉优先）
+     *    - 节点数 > 8：贪心插入 + 局部交换优化
+     * ========================================================= */
+    function findBestLowerOrder(upperOrder, lowerNodes, edges) {
+      var n = lowerNodes.length;
+      if (n <= 1) return lowerNodes.slice();
+
+      var layerEdges = [];
+      var upperSet = new Set(upperOrder);
+      var lowerSet = new Set(lowerNodes);
+      for (var e = 0; e < edges.length; e++) {
+        var link = edges[e];
+        if (upperSet.has(link.from) && lowerSet.has(link.to)) {
+          layerEdges.push(link);
+        }
+      }
+
+      if (n <= 8) {
+        var bestOrder = null;
+        var bestCrossings = Infinity;
+        permute(lowerNodes, function (p) {
+          var c = countCrossings(upperOrder, p, layerEdges);
+          if (c < bestCrossings) {
+            bestCrossings = c;
+            bestOrder = p.slice();
+          }
+        });
+        return bestOrder;
+      }
+
+      // 大层：贪心插入 + 局部优化
+      var order = greedyInsert(upperOrder, lowerNodes, layerEdges);
+      order = localSwapOptimize(upperOrder, order, layerEdges, 100);
+      return order;
+    }
+
+    /* =========================================================
+     * 6. 布局常量
+     * ========================================================= */
+    var NODE_COL_GAP = NODE_W + 56;   // 最小水平间距
+    var NODE_ROW_GAP = NODE_H + 92;   // 层间垂直间距
+    var totalHeight = (byLayer.length - 1) * NODE_ROW_GAP;
+
+    /* 收集所有有效边，用于交叉数计算 */
+    var allEdges = [];
+    links.forEach(function (link) {
+      if (nodes.has(link.from) && nodes.has(link.to)) {
+        allEdges.push({ from: link.from, to: link.to });
+      }
+    });
+
+    var nodeX = new Map();
+    var nodeY = new Map();
+
+    /* =========================================================
+     * 7. 第 0 层：均匀分布并居中
+     * ========================================================= */
+    var row0 = byLayer[0] || [];
+    var rowWidth0 = Math.max(0, (row0.length - 1) * NODE_COL_GAP);
+    row0.forEach(function (id, idx) {
+      nodeX.set(id, idx * NODE_COL_GAP - rowWidth0 / 2);
+      nodeY.set(id, 0 - totalHeight / 2);
+    });
+
+    /* =========================================================
+     * 8. 后续层：固定上层顺序，对下层寻找交叉数最少的排列
+     *    严格按分层交叉最小化：上层顺序已确定，下层通过穷举/贪心
+     *    选出交叉数最小（最好为 0）的水平顺序。
+     * ========================================================= */
+    for (var lix = 1; lix < byLayer.length; lix++) {
+      var upperOrder = byLayer[lix - 1];   // 上层顺序已固定
+      var lowerNodes = byLayer[lix].slice(); // 下层待排序节点
+
+      /* 查找交叉数最少的下层顺序 */
+      var bestOrder = findBestLowerOrder(upperOrder, lowerNodes, allEdges);
+      byLayer[lix] = bestOrder;   // 固定下层顺序，供下一层使用
+
+      var row = bestOrder;
+      var y = lix * NODE_ROW_GAP - totalHeight / 2;
+
+      /* 按最终排列放置 X，保持最小水平间距 */
+      var prevX = -Infinity;
+      row.forEach(function (id) {
+        /* 计算理想 X：单父继承父 X，多父取重心，无父居中 */
+        var idealX = 0;
+        var parents = pred.get(id) || [];
+        if (parents.length === 1) {
+          var p = parents[0];
+          var px = nodeX.get(p);
+          idealX = px !== undefined ? px : 0;
+        } else if (parents.length > 1) {
+          var sum = 0, cnt = 0;
+          for (var k = 0; k < parents.length; k++) {
+            var px = nodeX.get(parents[k]);
+            if (px !== undefined) {
+              sum += px;
+              cnt++;
+            }
+          }
+          idealX = cnt > 0 ? sum / cnt : 0;
+        }
+
+        /* 防重叠：从左到右，确保相邻节点间距 >= NODE_COL_GAP */
+        var x = Math.max(idealX, prevX + NODE_COL_GAP);
+        nodeX.set(id, x);
+        nodeY.set(id, y);
+        prevX = x;
+      });
+    }
+
+    /* =========================================================
+     * 9. 单对一垂直对齐后处理
+     *    若父节点只有一个子节点且子节点只有一个父节点，
+     *    强制子节点 X 与父节点 X 完全一致（正下方对齐）。
+     * ========================================================= */
+    ids.forEach(function (childId) {
+      var parents = pred.get(childId) || [];
+      if (parents.length === 1) {
+        var p = parents[0];
+        var childrenOfP = succ.get(p) || [];
+        if (childrenOfP.length === 1) {
+          var parentX = nodeX.get(p);
+          if (parentX !== undefined) {
+            nodeX.set(childId, parentX);
+          }
+        }
+      }
+    });
+
+    /* =========================================================
+     * 9. 应用位置并刷新
+     * ========================================================= */
     byLayer.forEach(function (row, lix) {
-      var rowWidth = Math.max(0, (row.length - 1) * colGap);
-      row.forEach(function (id, idx) {
+      row.forEach(function (id) {
         var node = nodes.get(id);
         if (!node) return;
-        var x = idx * colGap - rowWidth / 2;
-        var y = lix * rowGap - totalHeight / 2;
+        var x = nodeX.get(id) || 0;
+        var y = nodeY.get(id) !== undefined
+          ? nodeY.get(id)
+          : (lix * NODE_ROW_GAP - totalHeight / 2);
         setNodePosition(node, x, y, false);
       });
     });

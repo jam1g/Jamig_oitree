@@ -399,12 +399,25 @@ function persist() {
   syncActiveCategoryFromScene();
   clearTimeout(persistTimer);
   persistTimer = setTimeout(function () {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (err) {
-      console.warn("[oitree] 保存本地数据失败：", err);
+    saveStateSilently();
+
+    /* 通知云同步模块（js/sync.js）：本地已完成一次保存 */
+    if (typeof window.CustomEvent === "function") {
+      window.dispatchEvent(new CustomEvent("oitree:persist"));
     }
   }, 160);
+}
+
+/**
+ * 仅写入 localStorage，不派发同步事件。
+ * 用于云端数据应用到本地后的静默落缓存，避免“拉取即上传”的回声写入。
+ */
+function saveStateSilently() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    console.warn("[oitree] 保存本地数据失败：", err);
+  }
 }
 
 /* =========================================================

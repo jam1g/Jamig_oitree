@@ -13,6 +13,12 @@
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css" />
+
+  <!-- ========== 第三方 SDK ========== -->
+  <!-- Supabase JS SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Cloudflare Turnstile SDK -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -49,6 +55,28 @@
         <button id="add-node" type="button" class="btn btn-primary">＋ 增加题目</button>
         <button id="auto-layout" type="button" class="btn btn-ghost">⇅ 一键整理布局</button>
         <button id="reset-view" type="button" class="btn btn-ghost">⌖ 重置视图</button>
+      </div>
+
+      <div class="toolbar-user" id="toolbar-user">
+        <!-- ☁️ 云同步状态（仅登录后显示） -->
+        <div class="sync-status" id="sync-status" hidden role="status" aria-live="polite">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span class="sync-status-text" id="sync-status-text">☁️ 云端已同步</span>
+        </div>
+        <!-- 未登录状态 -->
+        <button type="button" class="btn btn-ghost toolbar-auth-btn" id="toolbar-auth-btn" title="登录 / 注册" aria-label="登录 / 注册">
+          👤 登录 / 注册
+        </button>
+        <!-- 已登录状态（默认隐藏） -->
+        <div class="toolbar-user-profile hidden" id="toolbar-user-profile">
+          <button type="button" class="btn btn-ghost toolbar-user-btn" id="toolbar-user-btn" aria-label="用户菜单" aria-expanded="false" aria-controls="toolbar-user-menu">
+            <span class="user-avatar">👤</span>
+            <span class="user-name" id="toolbar-user-name">用户</span>
+          </button>
+          <div class="toolbar-user-menu hidden" id="toolbar-user-menu">
+            <button type="button" class="btn btn-ghost btn-block btn-sm" id="btn-logout" title="退出登录">🚪 退出登录</button>
+          </div>
+        </div>
       </div>
 
       <button type="button" class="drawer-toggle" id="drawer-toggle" title="题目列表" aria-label="打开题目列表">
@@ -293,6 +321,104 @@
     </div>
   </div>
 
+  <!-- ========== 登录 / 注册弹窗（Supabase 云端鉴权） ========== -->
+  <div class="modal-backdrop auth-backdrop" id="auth-modal" hidden>
+    <form class="modal auth-modal" id="auth-form" novalidate>
+      <header class="modal-header">
+        <div class="modal-header-left">
+          <h2 id="auth-modal-title">登录 / 注册</h2>
+        </div>
+        <button type="button" class="modal-close" id="auth-modal-close" aria-label="关闭">×</button>
+      </header>
+      <div class="modal-body auth-modal-body">
+        <!-- 标签页 -->
+        <div class="auth-tabs-bar" id="auth-tabs-bar">
+          <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+            <button type="button" class="auth-tab is-active" data-tab="login" role="tab" aria-selected="true">登录</button>
+            <button type="button" class="auth-tab" data-tab="register" role="tab" aria-selected="false">注册</button>
+          </div>
+        </div>
+
+        <!-- 提示消息 -->
+        <div class="auth-msg" id="auth-msg" role="status" aria-live="polite" hidden></div>
+
+        <!-- 登录面板 -->
+        <div class="auth-panel" id="auth-login-panel">
+          <div class="field">
+            <span class="field-label">邮箱地址</span>
+            <input id="auth-login-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="输入您的邮箱" />
+          </div>
+          <div class="field">
+            <span class="field-label">密码</span>
+            <input id="auth-login-password" name="password" type="password" autocomplete="current-password" placeholder="输入密码（至少 6 位）" />
+          </div>
+          <div class="auth-footer">
+            <button type="button" class="btn btn-ghost" id="auth-switch-to-register">没有账号？去注册</button>
+            <button type="submit" class="btn btn-primary" id="auth-login-submit">登录</button>
+          </div>
+        </div>
+
+        <!-- 注册面板（步骤一：发送验证码） -->
+        <div class="auth-panel" id="auth-register-panel" hidden>
+          <div class="field">
+            <span class="field-label">邮箱地址</span>
+            <input id="auth-reg-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="输入您的邮箱" />
+          </div>
+          <div class="field">
+            <span class="field-label">设置密码</span>
+            <input id="auth-reg-password" name="password" type="password" autocomplete="new-password" placeholder="设置密码（至少 6 位）" />
+          </div>
+          <div class="field">
+            <span class="field-label">确认密码</span>
+            <input id="auth-reg-confirm" name="confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" />
+          </div>
+
+          <!-- Turnstile 人机验证：data-sitekey 由 js/auth.js 按环境自动切换
+               （file/localhost → 官方测试 Key；jam1g.github.io → 真实 Key） -->
+          <div class="field">
+            <span class="field-label">人机验证</span>
+            <div class="cf-turnstile-wrapper">
+              <div class="cf-turnstile" id="auth-turnstile" data-sitekey="0x4AAAAAAf3rI-QlRU9zvi6M" data-theme="dark"></div>
+            </div>
+            <span class="field-hint" id="turnstile-hint">请先完成人机验证</span>
+          </div>
+
+          <div class="auth-footer">
+            <button type="button" class="btn btn-ghost" id="auth-switch-to-login">已有账号？去登录</button>
+            <button type="button" class="btn btn-primary" id="auth-send-code-btn" disabled>获取验证码 / 注册</button>
+          </div>
+        </div>
+
+        <!-- 验证邮箱面板（步骤二：验证 OTP） -->
+        <div class="auth-panel auth-verify-panel" id="auth-verify-panel" hidden>
+          <div class="auth-verify-info">
+            <div class="auth-verify-icon">✉️</div>
+            <p class="auth-verify-text">验证码已发送到</p>
+            <p class="auth-verify-email" id="auth-verify-email-display">—</p>
+            <p class="auth-verify-tip">请查收邮件中的 6 位数字验证码</p>
+          </div>
+
+          <!-- 6 位验证码输入 -->
+          <div class="auth-code-inputs" id="auth-code-inputs" role="group" aria-label="输入 6 位验证码">
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" data-index="0" autocomplete="one-time-code" aria-label="验证码第 1 位" />
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" data-index="1" aria-label="验证码第 2 位" />
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" data-index="2" aria-label="验证码第 3 位" />
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" data-index="3" aria-label="验证码第 4 位" />
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" data-index="4" aria-label="验证码第 5 位" />
+            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" data-index="5" aria-label="验证码第 6 位" />
+          </div>
+
+          <button type="button" class="btn btn-primary btn-block" id="auth-verify-code-btn" disabled>确认激活并登录</button>
+
+          <div class="auth-verify-actions">
+            <button type="button" class="btn btn-ghost" id="auth-resend-code-btn" disabled>重新发送验证码</button>
+            <button type="button" class="btn btn-ghost" id="auth-back-to-register">返回修改邮箱</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+
   <!-- ========== 外部 CDN 库 ========== -->
   <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -303,6 +429,8 @@
   <script defer src="./js/state.js"></script>
   <script defer src="./js/canvas.js"></script>
   <script defer src="./js/editor.js"></script>
+  <script defer src="./js/auth.js"></script>
+  <script defer src="./js/sync.js"></script>
   <script defer src="./js/app.js"></script>
 </body>
 </html>
