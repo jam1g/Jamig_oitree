@@ -18,7 +18,13 @@
   <!-- Supabase JS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
-<body>
+<body class="auth-locked auth-checking">
+  <!-- ========== 未登录访问拦截层 ========== -->
+  <div class="auth-gate" id="auth-gate" role="status" aria-live="polite">
+    <div class="auth-gate-brand">oitree</div>
+    <p class="auth-gate-tip" id="auth-gate-tip">正在验证登录状态…</p>
+  </div>
+
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-inner">
       <header class="sidebar-header">

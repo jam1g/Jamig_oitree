@@ -61,6 +61,76 @@ body.modal-open {
 }
 
 /* =========================================================
+ *  未登录访问拦截（路由守卫）
+ * ========================================================= */
+
+body.auth-locked .sidebar,
+body.auth-locked .main,
+body.auth-locked .drawer,
+body.auth-locked .drawer-backdrop,
+body.auth-locked .drawer-toggle {
+  visibility: hidden !important;
+  pointer-events: none !important;
+  user-select: none;
+}
+
+/* 强制登录时隐藏关闭按钮，并屏蔽其他弹窗 */
+body.auth-locked #auth-modal-close {
+  display: none !important;
+}
+
+body.auth-locked .modal-backdrop:not(.auth-backdrop) {
+  display: none !important;
+}
+
+/* 全屏深色拦截层（位于登录卡片遮罩之下） */
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 12vh;
+  text-align: center;
+  background: radial-gradient(
+      55% 45% at 50% 0%,
+      rgba(61, 139, 253, 0.14),
+      transparent 72%
+    ),
+    linear-gradient(180deg, #0b1017, #070b11);
+  pointer-events: none;
+}
+
+body.auth-locked .auth-gate {
+  display: flex;
+}
+
+.auth-gate-brand {
+  display: none;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.auth-gate-tip {
+  display: none;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 拦截层的文字只在“启动鉴权、尚未弹出卡片”时显示 */
+body.auth-checking .auth-gate-brand {
+  display: block;
+}
+
+body.auth-checking .auth-gate-tip {
+  display: block;
+}
+
+/* =========================================================
  *  🎨 全局暗黑极简滚动条美化
  * ========================================================= */
 
@@ -488,6 +558,11 @@ select option {
   background: rgba(16, 185, 129, 0.12);
   color: #6ee7b7;
   border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.auth-msg.info {
+  background: rgba(61, 139, 253, 0.12);
+  color: #9cc4ff;
+  border: 1px solid rgba(61, 139, 253, 0.3);
 }
 
 /* 登录/注册底部按钮组 */

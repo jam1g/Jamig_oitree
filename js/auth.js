@@ -38,6 +38,8 @@
     pendingEmail: "",
     busy: false,
     loggedIn: false,
+    authResolved: false,
+    locked: false,
     backdropPressed: false,
     menuOpen: false,
   };
@@ -66,6 +68,9 @@
     dom.loginPanel = $("auth-login-panel");
     dom.registerPanel = $("auth-register-panel");
     dom.activatePanel = $("auth-activate-panel");
+
+    /* 未登录拦截层 */
+    dom.gateTip = $("auth-gate-tip");
 
     /* 顶部工具栏 */
     dom.authBtn = $("toolbar-auth-btn");
@@ -115,9 +120,10 @@
 
     if (!window.supabase || typeof window.supabase.createClient !== "function") {
       supabaseTries += 1;
-      if (supabaseTries > 100) {
+      /* Supabase SDK 是阻塞加载的；若未就绪基本是网络/CDN 失败，快速失败避免长时间卡在验证中 */
+      if (supabaseTries > 10) {
         console.error("[auth] Supabase SDK 加载失败");
-        setMessage("云端服务加载失败，请检查网络后刷新页面", "error");
+        handleAuthUnavailable("云端服务加载失败，请检查网络后刷新页面");
         return;
       }
       window.setTimeout(initSupabase, 200);
@@ -134,12 +140,14 @@
       });
     } catch (err) {
       console.error("[auth] Supabase 初始化失败:", err);
-      setMessage("云端服务初始化失败，请刷新页面重试", "error");
+      handleAuthUnavailable("云端服务初始化失败，请刷新页面重试");
       return;
     }
 
     /* 实时监听登录状态：刷新页面后由 INITIAL_SESSION / SIGNED_IN 恢复 */
     supabase.auth.onAuthStateChange(function (event, session) {
+      markAuthResolved();
+
       if (event === "SIGNED_OUT" || event === "USER_DELETED") {
         updateAuthUI(null);
         return;
@@ -155,7 +163,9 @@
         dom.modal &&
         !dom.modal.hidden
       ) {
-        window.setTimeout(closeAuthModal, 320);
+        window.setTimeout(function () {
+          closeAuthModal(true);
+        }, 320);
       }
     });
 
@@ -163,11 +173,13 @@
       .getSession()
       .then(function (result) {
         if (result.error) console.warn("[auth] 读取会话失败:", result.error);
+        markAuthResolved();
         var session = result.data ? result.data.session : null;
         updateAuthUI(session && session.user ? session.user : null);
       })
       .catch(function (err) {
         console.warn("[auth] 读取会话异常:", err);
+        markAuthResolved();
         updateAuthUI(null);
       });
   }
@@ -215,6 +227,8 @@
       }
       closeUserMenu();
     }
+
+    syncAuthGate(currentUser);
   }
 
   function buildAvatarText(name) {
@@ -265,6 +279,9 @@
   function openAuthModal(tab) {
     if (!dom.modal) return;
 
+    /* 未登录时始终进入强制登录态（隐藏关闭按钮、禁止遮罩关闭） */
+    if (!ui.loggedIn) setLocked(true);
+
     clearMessage();
 
     /* 先显示弹窗，再切换到对应视图 */
@@ -288,8 +305,11 @@
     }, 80);
   }
 
-  function closeAuthModal() {
+  function closeAuthModal(force) {
     if (!dom.modal) return;
+
+    /* 强制登录态下禁止任何关闭方式（关闭按钮 / 遮罩 / Esc） */
+    if (ui.locked && !force) return;
 
     setHidden(dom.modal, true);
 
@@ -300,6 +320,161 @@
     });
 
     if (!otherOpen) document.body.classList.remove("modal-open");
+  }
+
+  /* =========================================================
+   *  未登录访问拦截（路由守卫）
+   * ========================================================= */
+
+  function markAuthResolved() {
+    if (ui.authResolved) return;
+    ui.authResolved = true;
+    document.body.classList.remove("auth-checking");
+  }
+
+  function setLocked(locked) {
+    ui.locked = !!locked;
+    document.body.classList.toggle("auth-locked", ui.locked);
+
+    if (dom.closeBtn) {
+      if (ui.locked) {
+        dom.closeBtn.hidden = true;
+        dom.closeBtn.setAttribute("hidden", "");
+      } else {
+        dom.closeBtn.hidden = false;
+        dom.closeBtn.removeAttribute("hidden");
+      }
+    }
+
+    if (dom.gateTip) {
+      dom.gateTip.textContent = ui.locked
+        ? "🔒 请先登录后继续使用"
+        : "正在验证登录状态…";
+    }
+  }
+
+  function syncAuthGate(user) {
+    if (!ui.authResolved) return;
+
+    if (user) {
+      var wasLocked = ui.locked;
+      setLocked(false);
+
+      /* 登录成功：等成功提示展示片刻后平滑收起登录卡片 */
+      if (wasLocked && dom.modal && !dom.modal.hidden) {
+        window.setTimeout(function () {
+          closeAuthModal(true);
+        }, 320);
+      }
+      return;
+    }
+
+    var wasUnlocked = !ui.locked;
+
+    setLocked(true);
+
+    if (wasUnlocked) {
+      /* 首次进入未登录态 / 退出登录：清空画布与内存数据 */
+      clearAppDataForLock();
+    }
+
+    openForcedLogin(wasUnlocked ? "请先登录后继续使用" : "");
+  }
+
+  function openForcedLogin(message, type) {
+    if (!dom.modal) return;
+
+    /* 已经处于强制登录态：保留当前 Tab 与用户输入，不重复刷新 */
+    if (!dom.modal.hidden && ui.locked) return;
+
+    ui.pendingEmail = "";
+    ui.view = "login";
+
+    openAuthModal("login");
+
+    if (message) setMessage(message, type || "info");
+  }
+
+  /* 清除上一个账号的画布 / 内存 / 本地缓存，防止数据串号 */
+  function clearAppDataForLock() {
+    /* 先关闭可能残留的编辑弹窗，避免其内部逻辑回写旧数据 */
+    closeAppOverlays();
+
+    try {
+      if (typeof STORAGE_KEY === "string") {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch (err) {
+      /* 忽略 */
+    }
+
+    if (typeof LEGACY_KEYS !== "undefined" && Array.isArray(LEGACY_KEYS)) {
+      for (var i = 0; i < LEGACY_KEYS.length; i++) {
+        try {
+          localStorage.removeItem(LEGACY_KEYS[i]);
+        } catch (_) {
+          /* 忽略 */
+        }
+      }
+    }
+
+    /* 重置为默认题库；state-applied 会让 app.js 重新加载画布并刷新侧栏 */
+    if (typeof initAppState === "function") {
+      initAppState();
+    }
+
+    if (typeof window.CustomEvent === "function") {
+      window.dispatchEvent(new CustomEvent("oitree:state-applied"));
+    }
+  }
+
+  function closeAppOverlays() {
+    try {
+      if (window.OITreeEditor) {
+        if (typeof window.OITreeEditor.closeProblemModal === "function") {
+          window.OITreeEditor.closeProblemModal();
+        }
+        if (typeof window.OITreeEditor.closeZenMode === "function") {
+          window.OITreeEditor.closeZenMode(true);
+        }
+        if (typeof window.OITreeEditor.closeReaderModal === "function") {
+          window.OITreeEditor.closeReaderModal();
+        }
+      }
+    } catch (err) {
+      /* 忽略 */
+    }
+
+    var catModal = $("cat-modal");
+    if (catModal) {
+      catModal.hidden = true;
+      catModal.classList.add("hidden");
+    }
+
+    var drawer = $("drawer");
+    if (drawer) drawer.classList.remove("is-open");
+
+    var drawerBackdrop = $("drawer-backdrop");
+    if (drawerBackdrop) drawerBackdrop.classList.remove("is-visible");
+
+    var drawerToggle = $("drawer-toggle");
+    if (drawerToggle) drawerToggle.classList.remove("is-open");
+  }
+
+  function handleAuthUnavailable(message) {
+    markAuthResolved();
+    ui.loggedIn = false;
+    currentUser = null;
+
+    setHidden(dom.authBtn, false);
+    setHidden(dom.userProfile, true);
+    notifyAuthListeners(null);
+
+    setLocked(true);
+    openForcedLogin(
+      message || "无法连接云端，请检查网络后刷新页面",
+      "error"
+    );
   }
 
   /* =========================================================
