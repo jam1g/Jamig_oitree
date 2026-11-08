@@ -504,108 +504,12 @@ select option {
 }
 
 /* =========================================================
- *  Supabase 鉴权：Turnstile 人机验证 + 邮箱验证码样式
+ *  Supabase 鉴权：邮箱激活提示样式
  * ========================================================= */
-
-/* Turnstile 验证码容器 */
-.cf-turnstile-wrapper {
-  display: flex;
-  justify-content: center;
-  margin: 8px 0;
-}
-.cf-turnstile-wrapper iframe {
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-/* 字段提示文本 */
-.field-hint {
-  font-size: 12px;
-  margin-top: 4px;
-  display: block;
-}
-
-/* 验证邮箱信息区域 */
-.auth-verify-info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.auth-verify-icon {
-  font-size: 48px;
-}
-
-/* 6 位验证码输入框组 */
-.auth-code-inputs {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  margin: 12px 0;
-}
-.auth-code-inputs input {
-  width: 44px;
-  height: 48px;
-  font-size: 20px;
-  font-weight: 700;
-  text-align: center;
-  color: var(--text);
-  background: #101827;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  outline: none;
-  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
-}
-.auth-code-inputs input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(61, 139, 253, 0.2);
-  background: #0d1522;
-}
-.auth-code-inputs input:empty {
-  border-color: #334155;
-}
-
-/* 验证操作按钮组 */
-.auth-verify-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  max-width: 320px;
-}
-
-/* 倒计时按钮状态 */
-#auth-resend-code-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-/* 验证码按钮状态 */
-#auth-verify-code-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-/* 注册按钮禁用状态 */
-#auth-send-code-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
 /* 弹窗 body 内部布局微调 */
 .auth-modal-body {
   overflow: hidden;
-}
-
-/* 响应式：小屏幕下验证码输入框更紧凑 */
-@media (max-width: 480px) {
-  .auth-code-inputs input {
-    width: 38px;
-    height: 44px;
-    font-size: 18px;
-  }
 }
 
 /* =========================================================
@@ -828,104 +732,58 @@ select option {
   min-width: 112px;
 }
 
-/* 验证码视图 */
-.auth-verify-panel {
-  align-items: center;
+/* 邮箱激活提示 */
+.auth-activate-panel {
   text-align: center;
-  gap: 14px;
+  gap: 16px;
 }
 
-.auth-verify-info {
+.auth-activate-box {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 0;
+  gap: 8px;
+  padding: 18px 18px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 14px;
+  background: linear-gradient(
+    180deg,
+    rgba(16, 185, 129, 0.16),
+    rgba(16, 185, 129, 0.06)
+  );
+  box-shadow: 0 10px 30px rgba(16, 185, 129, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.auth-verify-icon {
-  font-size: 42px;
-  line-height: 1;
-  filter: drop-shadow(0 6px 18px rgba(61, 139, 253, 0.35));
+.auth-activate-title {
+  color: #6ee7b7;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
 }
 
-.auth-verify-text {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.auth-verify-email {
+.auth-activate-email {
   color: var(--text);
   font-size: 14.5px;
   font-weight: 650;
   word-break: break-all;
+  margin: 2px 0;
 }
 
-.auth-verify-tip {
-  color: #64748b;
+.auth-activate-tip {
+  color: var(--muted);
   font-size: 12.5px;
+  line-height: 1.65;
 }
 
-.auth-verify-actions {
+.auth-activate-actions {
   display: flex;
-  flex-direction: row;
-  align-items: center;
   justify-content: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+#auth-goto-login-btn {
   width: 100%;
   max-width: 320px;
-}
-
-#auth-verify-code-btn {
-  width: 100%;
-  max-width: 320px;
-}
-
-/* 禁用态：降低饱和与阴影，状态更清晰 */
-#auth-send-code-btn:disabled,
-#auth-verify-code-btn:disabled,
-#auth-resend-code-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  box-shadow: none;
-  filter: saturate(0.6);
-}
-
-/* Turnstile 状态提示 */
-#turnstile-hint {
-  text-align: center;
-  color: #64748b;
-  transition: color 140ms ease;
-}
-
-#turnstile-hint.is-warning {
-  color: var(--danger);
-}
-
-#turnstile-hint.is-success {
-  color: #6ee7b7;
-}
-
-/* 验证码错误抖动 */
-.auth-code-inputs.is-invalid input {
-  border-color: var(--danger);
-  box-shadow: 0 0 0 3px rgba(254, 76, 97, 0.18);
-  animation: auth-shake 320ms ease;
-}
-
-@keyframes auth-shake {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  25% {
-    transform: translateX(-4px);
-  }
-  50% {
-    transform: translateX(4px);
-  }
-  75% {
-    transform: translateX(-2px);
-  }
+  margin: 0 auto;
 }
