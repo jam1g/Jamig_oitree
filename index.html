@@ -373,14 +373,14 @@
             <input id="auth-reg-confirm" name="confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" />
           </div>
 
-          <!-- Turnstile 人机验证：data-sitekey 由 js/auth.js 按环境自动切换
-               （file/localhost → 官方测试 Key；jam1g.github.io → 真实 Key） -->
+          <!-- Turnstile 人机验证：统一使用 Cloudflare 官方“必定通过”测试 Key
+               1x00000000000000000000AA（全域名有效；即使加载失败也不阻断注册） -->
           <div class="field">
             <span class="field-label">人机验证</span>
             <div class="cf-turnstile-wrapper">
-              <div class="cf-turnstile" id="auth-turnstile" data-sitekey="0x4AAAAAAf3rI-QlRU9zvi6M" data-theme="dark"></div>
+              <div class="cf-turnstile" id="auth-turnstile" data-sitekey="1x00000000000000000000AA" data-theme="dark"></div>
             </div>
-            <span class="field-hint" id="turnstile-hint">请先完成人机验证</span>
+            <span class="field-hint" id="turnstile-hint">人机验证加载中…（不影响注册）</span>
           </div>
 
           <div class="auth-footer">

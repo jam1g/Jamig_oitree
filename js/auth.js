@@ -17,15 +17,16 @@
   var SUPABASE_URL = "https://ogdxloknhpjkwjlewymr.supabase.co";
   var SUPABASE_KEY = "sb_publishable_pzyik4TyzrwGj5qrsW4ykg_PGOByxSW";
   /* ---------------------------------------------------------
-   *  Cloudflare Turnstile Site Key：本地 / 线上双模式
-   *  - 本地（file: / localhost / 127.0.0.1 / ::1）→ 官方“必定通过”测试 Key
-   *  - 线上 jam1g.github.io → 真实 Site Key
-   *  - 其他未知域名（预览、内网 IP 等）→ 回退测试 Key，避免“站点密钥无效”
+   *  Cloudflare Turnstile Site Key
+   *  统一使用 Cloudflare 官方“必定通过（Always Passes）”测试 Key：
+   *  1x00000000000000000000AA
+   *  - 官方说明：该 Key 对所有域名（file / localhost / GitHub Pages /
+   *    任意部署平台）永久有效，组件会立即显示绿色勾选
+   *  - 好处：彻底避免“站点密钥无效”导致注册被卡死
+   *  - 后续若需要真实人机防护，可在此换回自己的生产 Site Key
    * --------------------------------------------------------- */
 
-  var TURNSTILE_PROD_SITE_KEY = "0x4AAAAAAf3rI-QlRU9zvi6M";
-  var TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
-  var TURNSTILE_PROD_HOSTS = ["jam1g.github.io", "www.jam1g.github.io"];
+  var TURNSTILE_SITE_KEY = "1x00000000000000000000AA";
 
   /* 仅本地使用的直通令牌（file:// 等无法加载挑战 iframe 时兜底） */
   var LOCAL_BYPASS_TOKEN = "__oitree_local_turnstile_bypass__";
@@ -414,17 +415,8 @@
   }
 
   function getTurnstileSiteKey() {
-    if (isLocalEnvironment()) return TURNSTILE_TEST_SITE_KEY;
-
-    var host = normalizeHostname(window.location.hostname);
-    if (TURNSTILE_PROD_HOSTS.indexOf(host) !== -1) {
-      return TURNSTILE_PROD_SITE_KEY;
-    }
-
-    console.warn(
-      "[auth] 未配置的域名 " + host + "，Turnstile 自动回退到官方测试 Key"
-    );
-    return TURNSTILE_TEST_SITE_KEY;
+    /* 全环境统一使用官方“必定通过”测试 Key，彻底避免“站点密钥无效” */
+    return TURNSTILE_SITE_KEY;
   }
 
   /* 初始化 / 渲染前同步容器上的 data-sitekey，使其与实际使用的 Key 一致 */
@@ -442,8 +434,7 @@
       console.info(
         "[auth] Turnstile Site Key 已就绪：" +
           siteKey +
-          " | 环境：" +
-          (isLocalEnvironment() ? "本地测试（必定通过）" : "线上生产") +
+          "（官方测试 Key，全域名通过）" +
           " | 域名：" +
           (window.location.hostname || "(file://)")
       );
@@ -495,7 +486,7 @@
       if (ui.turnstileTries <= 100) {
         window.setTimeout(ensureTurnstileWidget, 200);
       } else if (dom.turnstileHint) {
-        dom.turnstileHint.textContent = "人机验证加载失败，请刷新页面重试";
+        dom.turnstileHint.textContent = "人机验证加载失败，仍可直接注册";
         dom.turnstileHint.classList.add("is-warning");
       }
       return;
@@ -507,11 +498,7 @@
 
     try {
       console.info(
-        "[auth] Turnstile 渲染：" +
-          (isLocalEnvironment() ? "本地测试 Key" : "线上生产 Key") +
-          " (" +
-          siteKey +
-          ")"
+        "[auth] Turnstile 渲染：官方测试 Key (" + siteKey + ")"
       );
 
       ui.turnstileWidgetId = window.turnstile.render(dom.turnstileBox, {
@@ -530,14 +517,14 @@
         },
         "error-callback": function () {
           ui.turnstileToken = null;
-          setTurnstileHint(false, "人机验证出错，请刷新页面重试");
+          setTurnstileHint(false, "人机验证暂不可用，仍可直接注册");
           updateSendCodeButton();
         },
       });
     } catch (err) {
       console.error("[auth] Turnstile 渲染失败:", err);
       if (dom.turnstileHint) {
-        dom.turnstileHint.textContent = "人机验证加载失败，请刷新页面重试";
+        dom.turnstileHint.textContent = "人机验证加载失败，仍可直接注册";
         dom.turnstileHint.classList.add("is-warning");
       }
     }
@@ -548,7 +535,7 @@
 
     dom.turnstileHint.textContent = verified
       ? "人机验证已通过 ✓"
-      : warningText || "请先完成人机验证";
+      : warningText || "人机验证加载中…（不影响注册）";
 
     dom.turnstileHint.classList.toggle("is-warning", !verified && !!warningText);
     dom.turnstileHint.classList.toggle("is-success", verified);
@@ -574,19 +561,20 @@
    *  按钮可用性
    * ========================================================= */
 
-  /* 只有完成人机验证且表单填写完整，才激活【获取验证码 / 注册】 */
+  /* 【容错】人机验证不再是硬门槛：
+   * 只要邮箱合法、密码 >= 6 位且填写了确认密码，即可点击注册。
+   * 即使 Turnstile 加载失败 / 被网络拦截 / 报“站点密钥无效”，也不会锁死按钮。 */
   function updateSendCodeButton() {
     if (!dom.sendCodeBtn) return;
 
-    var filled =
-      dom.regEmail &&
-      dom.regEmail.value.trim().length > 0 &&
-      dom.regPassword &&
-      dom.regPassword.value.length > 0 &&
-      dom.regConfirm &&
-      dom.regConfirm.value.length > 0;
+    var email = dom.regEmail ? dom.regEmail.value.trim() : "";
+    var password = dom.regPassword ? dom.regPassword.value : "";
+    var confirm = dom.regConfirm ? dom.regConfirm.value : "";
 
-    dom.sendCodeBtn.disabled = ui.busy || !ui.turnstileToken || !filled;
+    var ready =
+      isValidEmail(email) && password.length >= 6 && confirm.length > 0;
+
+    dom.sendCodeBtn.disabled = ui.busy || !ready;
   }
 
   function updateVerifyButton() {
@@ -723,10 +711,10 @@
       return;
     }
 
+    /* 【容错】Turnstile 失败 / 无令牌不再阻断注册；
+     * 有真实令牌时会作为 captchaToken 传给 Supabase，无令牌则省略该字段。 */
     if (!ui.turnstileToken) {
-      setTurnstileHint(false);
-      setMessage("请先完成人机验证", "error");
-      return;
+      console.info("[auth] 未获取到 Turnstile 令牌，继续调用 Supabase 注册");
     }
 
     if (!supabase) {
@@ -1177,6 +1165,9 @@
     if (msg.indexOf("signups not allowed") !== -1) {
       return "当前项目已关闭邮箱注册，请联系管理员";
     }
+    if (msg.indexOf("captcha") !== -1) {
+      return "人机验证校验未通过：若 Supabase 后台开启了 Captcha 保护，请确认已绑定 Turnstile，或稍后重试";
+    }
     if (msg.indexOf("email address") !== -1 && msg.indexOf("invalid") !== -1) {
       return "邮箱地址格式不正确";
     }
@@ -1307,7 +1298,7 @@
     /* 上线自检：控制台执行 OITreeAuth.getTurnstileSiteKey() 即应返回线上真实 Key */
     getTurnstileSiteKey: function () { return getTurnstileSiteKey(); },
     getTurnstileMode: function () {
-      return isLocalEnvironment() ? "test" : "production";
+      return "test";
     },
     onChange: function (handler) {
       if (typeof handler !== "function") return function () {};
