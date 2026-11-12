@@ -17,6 +17,12 @@
   var SUPABASE_URL = "https://ogdxloknhpjkwjlewymr.supabase.co";
   var SUPABASE_KEY = "sb_publishable_pzyik4TyzrwGj5qrsW4ykg_PGOByxSW";
 
+  /* 登录后“数据 + 首帧渲染”链路的超时保护（毫秒） */
+  var MODULE_WAIT_TIMEOUT = 8000;
+  var DATA_LOAD_TIMEOUT = 15000;
+  var RENDER_TIMEOUT = 4000;
+  var GATE_FADE_FALLBACK = 420;
+
   var $ = function (id) { return document.getElementById(id); };
 
   /* =========================================================
@@ -42,6 +48,12 @@
     locked: false,
     backdropPressed: false,
     menuOpen: false,
+    /* 登录后准备阶段：拉取云端数据 + 首次渲染完成前，遮罩保持覆盖 */
+    preparing: false,
+    workspaceReady: false,
+    prepareFailed: false,
+    prepareToken: 0,
+    preparePromise: null,
   };
 
   /* =========================================================
@@ -70,7 +82,11 @@
     dom.activatePanel = $("auth-activate-panel");
 
     /* 未登录拦截层 */
+    dom.gate = $("auth-gate");
     dom.gateTip = $("auth-gate-tip");
+    dom.gateActions = $("auth-gate-actions");
+    dom.gateRetry = $("auth-gate-retry");
+    dom.gateSkip = $("auth-gate-skip");
 
     /* 顶部工具栏 */
     dom.authBtn = $("toolbar-auth-btn");
@@ -155,18 +171,9 @@
 
       updateAuthUI(session && session.user ? session.user : null);
 
-      /* 在弹窗内完成登录 / 邮箱激活后自动收起弹窗 */
-      if (
-        (event === "SIGNED_IN" || event === "INITIAL_SESSION") &&
-        session &&
-        session.user &&
-        dom.modal &&
-        !dom.modal.hidden
-      ) {
-        window.setTimeout(function () {
-          closeAuthModal(true);
-        }, 320);
-      }
+      /* 注意：这里不再直接收起登录弹窗 / 揭开遮罩。
+       * 登录后的收尾统一由 prepareWorkspace() 负责：
+       * 云端数据拉取 + 首次渲染完成后才关闭弹窗并淡出遮罩。 */
     });
 
     supabase.auth
@@ -212,10 +219,10 @@
       if (dom.userName) dom.userName.textContent = name;
       if (dom.userAvatar) dom.userAvatar.textContent = buildAvatarText(name);
       if (dom.userBtn) {
-        dom.userBtn.title = user.email || name;
+        dom.userBtn.title = "返回个人中心";
         dom.userBtn.setAttribute(
           "aria-label",
-          "用户菜单（" + (user.email || name) + "）"
+          "返回个人中心（" + (user.email || name) + "）"
         );
       }
     } else {
@@ -313,7 +320,7 @@
 
     setHidden(dom.modal, true);
 
-    var others = ["modal", "cat-modal", "zen-modal", "reader-modal"];
+    var others = ["modal", "cat-modal", "topic-modal", "zen-modal", "reader-modal"];
     var otherOpen = others.some(function (id) {
       var el = $(id);
       return el && !el.hidden;
@@ -357,17 +364,37 @@
     if (!ui.authResolved) return;
 
     if (user) {
-      var wasLocked = ui.locked;
-      setLocked(false);
-
-      /* 登录成功：等成功提示展示片刻后平滑收起登录卡片 */
-      if (wasLocked && dom.modal && !dom.modal.hidden) {
-        window.setTimeout(function () {
-          closeAuthModal(true);
-        }, 320);
+      /* 同一用户已就绪（token 刷新 / 会话更新）：不重复拉取与重绘 */
+      if (
+        ui.workspaceReady &&
+        currentUser &&
+        currentUser.id === user.id
+      ) {
+        return;
       }
+
+      /* 刚刚同步失败：保留错误与重试入口，等待用户操作或主动重登录 */
+      if (
+        ui.prepareFailed &&
+        currentUser &&
+        currentUser.id === user.id
+      ) {
+        return;
+      }
+
+      /* 登录 / 恢复会话：关键——不立即解锁界面，
+       * 等云端数据 + 首次渲染全部完成后再由 revealWorkspace() 揭开遮罩。 */
+      prepareWorkspace(user);
       return;
     }
+
+    ui.prepareFailed = false;
+
+    if (!ui.preparing && !ui.preparePromise) {
+      ui.workspaceReady = false;
+    }
+
+    cancelPrepare();
 
     var wasUnlocked = !ui.locked;
 
@@ -381,8 +408,342 @@
     openForcedLogin(wasUnlocked ? "请先登录后继续使用" : "");
   }
 
+  /* =========================================================
+   *  登录后准备流程：云端数据 → 首帧渲染 → 揭开遮罩
+   * ========================================================= */
+
+  function setGateTip(text) {
+    if (dom.gateTip && text) dom.gateTip.textContent = text;
+  }
+
+  function setGateBusy(busy) {
+    document.body.classList.toggle("auth-preparing", !!busy);
+    if (busy) setGateTip("☁️ 正在同步您的云端题库…");
+  }
+
+  function hideGateActions() {
+    if (dom.gate) dom.gate.classList.remove("is-error");
+    if (dom.gateActions) {
+      dom.gateActions.hidden = true;
+      dom.gateActions.classList.add("hidden");
+    }
+  }
+
+  function showGateError(err) {
+    var message = mapSyncError(err);
+
+    /* 关键：保持遮罩，并把错误与重试入口展示出来，避免死锁在加载态 */
+    ui.prepareFailed = true;
+    setLocked(true);
+    setGateBusy(false);
+
+    if (dom.gate) dom.gate.classList.add("is-error");
+    setGateTip("⚠️ 云端题库同步失败：" + message);
+
+    if (dom.gateActions) {
+      dom.gateActions.hidden = false;
+      dom.gateActions.classList.remove("hidden");
+    }
+
+    /* 此时账号已登录成功，收起登录卡片，让遮罩上的重试入口可操作 */
+    if (dom.modal && !dom.modal.hidden) closeAuthModal(true);
+
+    console.warn("[auth] 云端数据准备失败：", err);
+  }
+
+  function mapSyncError(err) {
+    var raw = (err && (err.message || err.error_description)) || "";
+
+    if (/超时|timeout/i.test(raw)) {
+      return "加载超时，请检查网络后重试";
+    }
+    if (/failed to fetch|network|fetch/i.test(raw)) {
+      return "网络连接失败，请检查网络后重试";
+    }
+    return raw || "未知错误";
+  }
+
+  /* 等待依赖模块（sync.js / app.js）完成初始化 */
+  function waitForModule(getter, timeout) {
+    return new Promise(function (resolve) {
+      var start = Date.now();
+
+      (function check() {
+        var mod = null;
+        try {
+          mod = getter();
+        } catch (err) {
+          mod = null;
+        }
+
+        if (mod) return resolve(mod);
+        if (Date.now() - start >= timeout) return resolve(null);
+
+        window.setTimeout(check, 50);
+      })();
+    });
+  }
+
+  function withTimeout(promise, timeout, message) {
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+
+      var timer = window.setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        reject(new Error(message || "操作超时"));
+      }, timeout);
+
+      Promise.resolve(promise).then(
+        function (value) {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          resolve(value);
+        },
+        function (err) {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  function getSyncModule() {
+    return window.OITreeSync &&
+      typeof window.OITreeSync.loadUserData === "function"
+      ? window.OITreeSync
+      : null;
+  }
+
+  function getAppModule() {
+    return window.OITreeApp &&
+      typeof window.OITreeApp.renderWorkspaceAndWait === "function"
+      ? window.OITreeApp
+      : null;
+  }
+
+  /**
+   * 登录 / 会话恢复的统一准备入口（幂等）。
+   * 重复触发（signInWithPassword + onAuthStateChange + getSession）会复用同一流程。
+   */
+  function prepareWorkspace(user, options) {
+    if (!user || !user.id) return Promise.resolve({ ok: false });
+
+    if (ui.preparing && ui.preparePromise) return ui.preparePromise;
+
+    var opts = options || {};
+    var token = ++ui.prepareToken;
+
+    ui.preparing = true;
+    ui.workspaceReady = false;
+    ui.prepareFailed = false;
+
+    /* 先锁住界面并展示同步进度，绝不提前揭开未就绪的默认界面 */
+    setLocked(true);
+    hideGateActions();
+    setGateBusy(true);
+
+    var flow = runPrepareFlow(user, token, !!opts.force).then(
+      function (result) {
+        if (token === ui.prepareToken) {
+          ui.preparing = false;
+          ui.preparePromise = null;
+        }
+        return result;
+      }
+    );
+
+    ui.preparePromise = flow;
+    return flow;
+  }
+
+  function runPrepareFlow(user, token, force) {
+    return waitForModule(getSyncModule, MODULE_WAIT_TIMEOUT)
+      .then(function (syncMod) {
+        if (token !== ui.prepareToken) return { ok: false, aborted: true };
+
+        if (!syncMod) {
+          return { ok: false, error: new Error("云同步模块未就绪") };
+        }
+
+        /* 步骤 1：await 云端用户数据（与鉴权监听共用同一请求，不会重复拉取） */
+        return withTimeout(
+          syncMod.loadUserData(user, { force: force }),
+          DATA_LOAD_TIMEOUT,
+          "云端数据加载超时"
+        ).then(
+          function () {
+            return { ok: true };
+          },
+          function (err) {
+            return { ok: false, error: err };
+          }
+        );
+      })
+      .then(function (result) {
+        if (token !== ui.prepareToken) return { ok: false, aborted: true };
+
+        if (!result || !result.ok) {
+          /* 失败 / 超时：保留遮罩，给出重试与降级入口 */
+          finishPrepare(token);
+          showGateError(result && result.error);
+          return result || { ok: false };
+        }
+
+        /* 步骤 2：等分类栏 + 画布节点真正挂载并完成首帧绘制 */
+        return waitForModule(getAppModule, MODULE_WAIT_TIMEOUT).then(
+          function (appMod) {
+            if (token !== ui.prepareToken) return { ok: false, aborted: true };
+
+            if (!appMod) {
+              finishPrepare(token);
+              revealWorkspace();
+              return { ok: true, rendered: false };
+            }
+
+            return withTimeout(
+              appMod.renderWorkspaceAndWait(),
+              RENDER_TIMEOUT,
+              "界面渲染超时"
+            ).then(
+              function () {
+                if (token !== ui.prepareToken) {
+                  return { ok: false, aborted: true };
+                }
+                finishPrepare(token);
+                revealWorkspace();
+                return { ok: true, rendered: true };
+              },
+              function (err) {
+                console.warn("[auth] 首次渲染等待异常，直接展示工作台：", err);
+                if (token !== ui.prepareToken) {
+                  return { ok: false, aborted: true };
+                }
+                finishPrepare(token);
+                revealWorkspace();
+                return { ok: true, rendered: false };
+              }
+            );
+          }
+        );
+      })
+      .catch(function (err) {
+        /* 兜底：任何意外异常都转成可重试的遮罩错误，避免卡死在加载态 */
+        if (token !== ui.prepareToken) return { ok: false, aborted: true };
+
+        finishPrepare(token);
+        showGateError(err);
+        return { ok: false, error: err };
+      });
+  }
+
+  function finishPrepare(token) {
+    if (token !== ui.prepareToken) return false;
+
+    ui.preparing = false;
+    ui.preparePromise = null;
+    setGateBusy(false);
+    return true;
+  }
+
+  /* 最后一步：淡出遮罩 + 收起弹窗，向用户完整展现已准备好的工作台 */
+  function revealWorkspace() {
+    ui.workspaceReady = true;
+    ui.preparing = false;
+    ui.prepareFailed = false;
+
+    setGateBusy(false);
+    hideGateActions();
+
+    /* 同一帧内先关弹窗再解开锁定，避免出现中间态 */
+    if (dom.modal && !dom.modal.hidden) closeAuthModal(true);
+
+    if (dom.gate) dom.gate.classList.add("is-leaving");
+
+    setLocked(false);
+
+    /* 登录就绪后默认落在个人中心视图 */
+    if (
+      window.OITreeDashboard &&
+      typeof window.OITreeDashboard.showDashboard === "function"
+    ) {
+      window.OITreeDashboard.showDashboard();
+    }
+
+    window.setTimeout(function () {
+      if (!dom.gate) return;
+      dom.gate.classList.remove("is-leaving");
+    }, GATE_FADE_FALLBACK);
+  }
+
+  function cancelPrepare() {
+    if (!ui.preparing && !ui.preparePromise) return;
+
+    /* 使正在等待的流程失效，防止登出后旧请求再揭开界面 */
+    ui.prepareToken += 1;
+    ui.preparing = false;
+    ui.prepareFailed = false;
+    ui.preparePromise = null;
+
+    setGateBusy(false);
+    hideGateActions();
+  }
+
+  /* 遮罩上的“重试同步”：强制重新拉取云端数据 */
+  function handleGateRetry() {
+    if (ui.preparing) return;
+
+    if (!currentUser) {
+      openAuthModal("login");
+      return;
+    }
+
+    hideGateActions();
+    prepareWorkspace(currentUser, { force: true });
+  }
+
+  /* 遮罩上的“先使用本地数据进入”：优雅降级，顶部保留可点击重试入口 */
+  function handleGateSkip() {
+    if (!currentUser) return;
+
+    ui.prepareToken += 1;
+    ui.preparing = false;
+    ui.prepareFailed = false;
+    ui.preparePromise = null;
+
+    hideGateActions();
+    setGateBusy(false);
+
+    var appMod = getAppModule();
+    var token = ui.prepareToken;
+
+    if (!appMod) {
+      revealWorkspace();
+      return;
+    }
+
+    withTimeout(
+      appMod.renderWorkspaceAndWait(),
+      RENDER_TIMEOUT,
+      "界面渲染超时"
+    ).then(
+      function () {
+        if (token === ui.prepareToken) revealWorkspace();
+      },
+      function () {
+        if (token === ui.prepareToken) revealWorkspace();
+      }
+    );
+  }
+
   function openForcedLogin(message, type) {
     if (!dom.modal) return;
+
+    hideGateActions();
+    setGateBusy(false);
 
     /* 已经处于强制登录态：保留当前 Tab 与用户输入，不重复刷新 */
     if (!dom.modal.hidden && ui.locked) return;
@@ -423,6 +784,14 @@
       initAppState();
     }
 
+    /* 下次登录需要重新走“数据就绪 → 单次渲染”流程 */
+    if (
+      window.OITreeApp &&
+      typeof window.OITreeApp.resetRenderState === "function"
+    ) {
+      window.OITreeApp.resetRenderState();
+    }
+
     if (typeof window.CustomEvent === "function") {
       window.dispatchEvent(new CustomEvent("oitree:state-applied"));
     }
@@ -451,6 +820,12 @@
       catModal.classList.add("hidden");
     }
 
+    var topicModal = $("topic-modal");
+    if (topicModal) {
+      topicModal.hidden = true;
+      topicModal.classList.add("hidden");
+    }
+
     var drawer = $("drawer");
     if (drawer) drawer.classList.remove("is-open");
 
@@ -463,6 +838,7 @@
 
   function handleAuthUnavailable(message) {
     markAuthResolved();
+    cancelPrepare();
     ui.loggedIn = false;
     currentUser = null;
 
@@ -556,36 +932,55 @@
       return;
     }
 
-    ui.busy = true;
-    dom.loginSubmit.disabled = true;
-    dom.loginSubmit.textContent = "登录中...";
+    setLoginBusy(true);
+
+    var signedIn = false;
 
     supabase.auth
       .signInWithPassword({ email: email, password: password })
       .then(function (result) {
-        if (result.error) {
-          setMessage(mapAuthError(result.error), "error");
-          return;
-        }
+        if (result.error) throw result.error;
 
         var session = result.data ? result.data.session : null;
         if (!session || !session.user) {
-          setMessage("登录成功，但未获取到会话，请稍后重试", "error");
+          throw new Error("登录成功，但未获取到会话，请稍后重试");
+        }
+
+        signedIn = true;
+
+        /* 关键：先不要关闭弹窗 / 揭开遮罩 */
+        setMessage("登录成功，正在同步您的云端题库…", "success");
+
+        /* updateAuthUI 会通知 sync.js 开始拉取；
+         * prepareWorkspace 复用同一请求，await 直到数据写入内存。 */
+        updateAuthUI(session.user);
+
+        return prepareWorkspace(session.user);
+      })
+      .catch(function (err) {
+        if (signedIn) {
+          /* 云端准备阶段的异常已由 prepareWorkspace → showGateError 呈现 */
+          console.warn("[auth] 登录后数据准备异常：", err);
           return;
         }
 
-        updateAuthUI(session.user);
-        setMessage("登录成功，欢迎回来！", "success");
-        window.setTimeout(closeAuthModal, 320);
-      })
-      .catch(function (err) {
         setMessage(mapAuthError(err), "error");
       })
       .then(function () {
-        ui.busy = false;
-        dom.loginSubmit.disabled = false;
-        dom.loginSubmit.textContent = "登录";
+        setLoginBusy(false);
       });
+  }
+
+  /* 登录按钮 loading 态：文案 + 转圈 + 禁止重复点击 */
+  function setLoginBusy(busy) {
+    ui.busy = !!busy;
+
+    if (!dom.loginSubmit) return;
+
+    dom.loginSubmit.disabled = !!busy;
+    dom.loginSubmit.classList.toggle("is-loading", !!busy);
+    dom.loginSubmit.setAttribute("aria-busy", busy ? "true" : "false");
+    dom.loginSubmit.textContent = busy ? "正在登录并同步云库…" : "登录";
   }
 
   /* =========================================================
@@ -733,7 +1128,7 @@
 
     if (!supabase) {
       updateAuthUI(null);
-      return;
+      return Promise.resolve();
     }
 
     if (dom.logoutBtn) {
@@ -741,7 +1136,7 @@
       dom.logoutBtn.textContent = "正在退出...";
     }
 
-    supabase.auth
+    return supabase.auth
       .signOut()
       .then(function (result) {
         if (result && result.error) {
@@ -756,7 +1151,7 @@
       .then(function () {
         if (dom.logoutBtn) {
           dom.logoutBtn.disabled = false;
-          dom.logoutBtn.textContent = "🚪 退出登录";
+          dom.logoutBtn.textContent = "退出登录";
         }
       });
   }
@@ -882,13 +1277,28 @@
 
     dom.gotoLoginBtn.addEventListener("click", handleGotoLogin);
 
+    /* 云端数据准备失败时的重试 / 降级入口 */
+    if (dom.gateRetry) dom.gateRetry.addEventListener("click", handleGateRetry);
+    if (dom.gateSkip) dom.gateSkip.addEventListener("click", handleGateSkip);
+
     /* 登录 / 注册提交 */
     dom.form.addEventListener("submit", handleLogin);
     dom.sendCodeBtn.addEventListener("click", handleSendCode);
 
-    /* 右上角用户菜单 */
+    /* 右上角用户菜单 / 返回个人中心 */
     dom.userBtn.addEventListener("click", function (event) {
       event.stopPropagation();
+
+      /* 画布头像按钮 → 返回个人中心；Dashboard 不可用时回退为用户菜单 */
+      if (
+        window.OITreeDashboard &&
+        typeof window.OITreeDashboard.showDashboard === "function"
+      ) {
+        closeUserMenu();
+        window.OITreeDashboard.showDashboard();
+        return;
+      }
+
       toggleUserMenu();
     });
 
@@ -932,6 +1342,8 @@
     getClient: function () { return supabase; },
     getUser: function () { return currentUser; },
     isLoggedIn: function () { return !!currentUser; },
+    signOut: handleLogout,
+    closeMenus: closeUserMenu,
     onChange: function (handler) {
       if (typeof handler !== "function") return function () {};
 

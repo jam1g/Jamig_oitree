@@ -161,9 +161,12 @@
   color: #63768f;
   background: rgba(255, 255, 255, 0.05);
   padding: 2px 7px;
+  min-width: 22px;
+  text-align: center;
   border-radius: 999px;
   flex-shrink: 0;
-  transition: color 130ms ease, background 130ms ease;
+  transition: color 130ms ease, background 130ms ease, opacity 140ms ease,
+    transform 140ms ease;
 }
 
 .category-item.is-active .cat-count {
@@ -171,62 +174,86 @@
   background: rgba(61, 139, 253, 0.2);
 }
 
-.cat-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+/* 悬停时数量徽章淡出，给右侧浮动操作栏让位（不产生布局跳动） */
+.category-item:hover .cat-count,
+.category-item:focus-within .cat-count {
+  opacity: 0;
+  transform: scale(0.85);
 }
 
-.cat-btn {
+/* 悬停右侧浮动操作栏：设置 / 下载 */
+.cat-actions {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #26374f, #1e293b);
+  border: 1px solid rgba(90, 160, 255, 0.28);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(61, 139, 253, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(6px);
+  transition: opacity 150ms ease,
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms ease;
+}
+
+.category-item:hover .cat-actions,
+.category-item:focus-within .cat-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55),
+    0 0 14px rgba(61, 139, 253, 0.3);
+}
+
+.cat-action-btn {
   appearance: none;
+  width: 24px;
+  height: 24px;
   padding: 0;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
   background: transparent;
-  color: var(--muted);
+  color: #a9bcd6;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
   cursor: pointer;
   display: grid;
   place-items: center;
-  font-family: inherit;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease,
-    box-shadow 140ms ease, transform 80ms ease;
+  transition: background 130ms ease, color 130ms ease, border-color 130ms ease,
+    box-shadow 130ms ease, transform 80ms ease;
 }
 
-.cat-btn:active {
+.cat-action-btn:hover {
+  color: #ffffff;
+  background: rgba(61, 139, 253, 0.28);
+  border-color: rgba(90, 160, 255, 0.45);
+  box-shadow: 0 0 10px rgba(61, 139, 253, 0.4);
+}
+
+.cat-action-btn:active {
   transform: translateY(1px);
 }
 
-.cat-btn.export {
-  width: 34px;
-  height: 28px;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1;
+.cat-action-btn[data-action="settings"] {
+  font-size: 14px;
+}
+
+.cat-action-btn[data-action="download"] {
   color: #9ecbff;
-  background: rgba(61, 139, 253, 0.14);
-  border: 1px solid rgba(61, 139, 253, 0.32);
 }
 
-.cat-btn.export:hover {
-  background: rgba(61, 139, 253, 0.32);
-  border-color: var(--accent);
-  color: #fff;
-  box-shadow: 0 2px 12px rgba(61, 139, 253, 0.42);
-}
-
-.cat-name-input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  font-size: 13.5px;
-  color: var(--text);
-  background: #101827;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  padding: 3px 7px;
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(61, 139, 253, 0.2);
+/* 登录解锁后，侧边栏必须恢复可交互（避免残留 pointer-events: none） */
+body:not(.auth-locked) .sidebar {
+  pointer-events: auto;
 }
 
 .sidebar-footer {
@@ -246,31 +273,7 @@
  *  题目列表抽屉
  * ========================================================= */
 
-.drawer-toggle {
-  appearance: none;
-  border: 1px solid var(--line);
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease,
-    box-shadow 140ms ease;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.drawer-toggle:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-  border-color: #3d5470;
-}
-
+/* 📋 题目列表按钮：尺寸 / 圆角 / 悬停统一继承 .btn.btn-ghost */
 .drawer-toggle.is-open {
   background: rgba(61, 139, 253, 0.18);
   border-color: var(--accent);

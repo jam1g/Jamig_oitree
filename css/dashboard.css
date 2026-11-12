@@ -1,0 +1,822 @@
+/* =========================================================
+ *  dashboard.css — 双视图路由 + 个人中心工作台
+ *  视图一：#dashboard-view（个人中心）
+ *  视图二：#canvas-view（原有画布工作台）
+ * ========================================================= */
+
+/* ---------------- 双视图基础 ---------------- */
+
+.app-view {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.app-view:not(.active) {
+  display: none !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app-view.active {
+  display: flex !important;
+  opacity: 1;
+  pointer-events: auto;
+  animation: app-view-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes app-view-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 未登录 / 鉴权锁屏时，两个主视图都不可见 */
+body.auth-locked .app-view {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* 图二：保持原有的「左侧分类栏 + 右侧主区域」横向布局 */
+#canvas-view.active {
+  flex-direction: row;
+}
+
+/* ---------------- 图一：个人中心工作台 ---------------- */
+
+#dashboard-view.active {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(
+      60% 50% at 18% 0%,
+      rgba(61, 139, 253, 0.12),
+      transparent 68%
+    ),
+    radial-gradient(
+      50% 45% at 100% 100%,
+      rgba(16, 185, 129, 0.08),
+      transparent 70%
+    ),
+    #0b0f19;
+}
+
+.dashboard-shell {
+  position: relative;
+  display: flex;
+  width: min(1180px, calc(100vw - 48px));
+  height: min(820px, calc(100vh - 48px));
+  min-height: 520px;
+  overflow: hidden;
+  background: #111827;
+  border: 1px solid #1e293b;
+  border-radius: 18px;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.015) inset;
+}
+
+.dashboard-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 22px;
+  width: 280px;
+  padding: 26px 20px 22px;
+  background: #111827;
+  border-right: 1px solid #1e293b;
+}
+
+.dashboard-user-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+}
+
+.dashboard-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #4d95ff, #2f7ae8);
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 6px 18px rgba(61, 139, 253, 0.28);
+}
+
+.dashboard-user-meta {
+  min-width: 0;
+}
+
+.dashboard-user-name {
+  overflow: hidden;
+  color: #e8eef7;
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dashboard-user-email {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dashboard-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-nav-btn {
+  appearance: none;
+  width: 100%;
+  height: 46px;
+  padding: 0 16px;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #94a3b8;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.dashboard-nav-btn:hover {
+  background: #162033;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.dashboard-nav-btn.is-active {
+  background: linear-gradient(
+    90deg,
+    rgba(61, 139, 253, 0.22),
+    rgba(61, 139, 253, 0.05)
+  );
+  border-color: rgba(61, 139, 253, 0.62);
+  color: #ffffff;
+  box-shadow: inset 2px 0 0 #3d8bfd;
+}
+
+.dashboard-nav-btn:focus-visible,
+.dashboard-logout:focus-visible,
+.btn-start-record:focus-visible {
+  outline: 2px solid rgba(125, 211, 252, 0.55);
+  outline-offset: 2px;
+}
+
+.dashboard-logout {
+  appearance: none;
+  margin-top: auto;
+  height: 44px;
+  border: 1px solid rgba(254, 76, 97, 0.32);
+  border-radius: 10px;
+  background: rgba(254, 76, 97, 0.08);
+  color: #ff8a95;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.dashboard-logout:hover {
+  border-color: rgba(254, 76, 97, 0.6);
+  background: rgba(254, 76, 97, 0.16);
+  color: #ffb4bd;
+  box-shadow: 0 0 18px rgba(254, 76, 97, 0.16);
+}
+
+.dashboard-logout:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ---------------- 右侧主展示区 ---------------- */
+
+.dashboard-content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 28px 34px 24px;
+  overflow-y: auto;
+  background-color: #0b0f19;
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(30, 41, 59, 0.55) 1px,
+    transparent 0
+  );
+  background-size: 26px 26px;
+}
+
+.dashboard-panel {
+  display: none;
+}
+
+.dashboard-panel.is-active {
+  display: block;
+  animation: dashboard-panel-in 0.24s ease;
+}
+
+@keyframes dashboard-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dashboard-panel h2 {
+  margin-bottom: 18px;
+  color: #e8eef7;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.dashboard-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 340px;
+  padding: 24px;
+  border: 1px dashed #1e293b;
+  border-radius: 14px;
+  background: rgba(17, 24, 39, 0.55);
+  color: #475569;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------------- 首页：3D 难度天梯 + 工具箱 ---------------- */
+
+.dashboard-home {
+  height: 100%;
+  min-height: 0;
+}
+
+.dashboard-content-home {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+.home-card {
+  position: relative;
+  overflow: hidden;
+  background: #111827;
+  border: 1px solid #1e293b;
+  border-radius: 14px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+}
+
+.home-chart-card {
+  display: flex;
+  flex: 1 1 55%;
+  flex-direction: column;
+  min-height: 300px;
+  padding: 18px 22px 10px;
+}
+
+.chart-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+  padding-bottom: 4px;
+}
+
+.chart-title {
+  color: #e8eef7;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.chart-total {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+  color: #94a3b8;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-total span {
+  color: #7dd3fc;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 0 16px rgba(125, 211, 252, 0.35);
+}
+
+.chart-total small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.home-toolbox-card {
+  display: flex;
+  flex: 0 1 35%;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px;
+  border-style: dashed;
+  background: rgba(17, 24, 39, 0.6);
+}
+
+.toolbox-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.toolbox-icon {
+  font-size: 26px;
+  opacity: 0.55;
+  filter: saturate(0.65);
+}
+
+.home-footer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+/* ---------------- 洛谷 8 阶扁平 2D 柱状图 ---------------- */
+
+.bars-2d-track {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: clamp(8px, 1.4vw, 20px);
+  min-height: 200px;
+  margin-top: 8px;
+  padding: 6px 6px 0;
+}
+
+.bar-unit {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  height: 100%;
+  min-width: 0;
+  max-width: 92px;
+  padding: 6px 4px 2px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.bar-unit:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.bar-unit.is-active {
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow:
+    0 0 0 1px var(--bar-color),
+    0 0 22px rgba(255, 255, 255, 0.06);
+}
+
+.bar-val {
+  flex: 0 0 18px;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.18s ease;
+}
+
+.bar-unit.is-zero .bar-val {
+  color: #64748b;
+}
+
+.bar-unit:hover .bar-val,
+.bar-unit.is-active .bar-val {
+  color: #ffffff;
+}
+
+.bar-pill {
+  width: 44px;
+  max-width: 100%;
+  height: 0;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.28) 0%,
+      rgba(255, 255, 255, 0.04) 24%,
+      rgba(0, 0, 0, 0.12) 100%
+    ),
+    var(--bar-color);
+  transition:
+    height 0.4s ease,
+    box-shadow 0.18s ease,
+    filter 0.18s ease;
+}
+
+.bar-unit.is-up .bar-pill {
+  height: var(--target-h, 15px);
+}
+
+.bar-unit:hover .bar-pill {
+  filter: brightness(1.08);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 0 16px var(--bar-color);
+}
+
+.bar-unit.is-active .bar-pill {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.32),
+    0 0 24px var(--bar-color),
+    0 0 42px rgba(255, 255, 255, 0.06);
+}
+
+.bar-unit[data-diff="noi"] .bar-pill {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.2) 0%,
+      rgba(255, 255, 255, 0.03) 24%,
+      rgba(0, 0, 0, 0.14) 100%
+    ),
+    #475569;
+}
+
+.bar-label {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex: 0 0 30px;
+  width: 74px;
+  max-width: 100%;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  transition: color 0.18s ease;
+}
+
+.bar-unit:hover .bar-label,
+.bar-unit.is-active .bar-label {
+  color: #e2e8f0;
+}
+
+.bar-unit[data-diff="noi"] .bar-label {
+  color: #cbd5e1;
+}
+
+/* ---------------- 难度题目下钻浮窗 ---------------- */
+
+.diff-problems-popover {
+  position: absolute;
+  top: 58px;
+  right: 16px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: min(310px, calc(100% - 32px));
+  max-height: calc(100% - 74px);
+  overflow: hidden;
+  background: #0b1220;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  animation: popover-in 0.16s ease-out;
+}
+
+.diff-problems-popover[hidden] {
+  display: none !important;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.popover-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #e2e8f0;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.popover-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #64748b;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.06);
+}
+
+.popover-close {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.popover-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.popover-problem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+
+.popover-problem:hover,
+.popover-problem:focus-visible {
+  background: rgba(61, 139, 253, 0.12);
+  outline: none;
+}
+
+.popover-problem-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.popover-problem:hover .popover-problem-name {
+  color: #ffffff;
+}
+
+.problem-status {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.problem-status.status-ac {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.problem-status.status-hint {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.problem-status.status-fail {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.problem-status.status-none {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.popover-empty {
+  padding: 28px 12px;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+}
+
+
+
+.btn-start-record {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 24px;
+  border: 2px solid #10b981;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.08);
+  color: #10b981;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.12);
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+
+.btn-start-record:hover {
+  transform: translateY(-2px);
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  box-shadow:
+    0 10px 30px rgba(16, 185, 129, 0.28),
+    0 0 22px rgba(16, 185, 129, 0.24);
+}
+
+.btn-start-record:active {
+  transform: translateY(0);
+}
+
+/* ---------------- 响应式 ---------------- */
+
+@media (max-width: 900px) {
+  #dashboard-view.active {
+    padding: 12px;
+  }
+
+  .dashboard-shell {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+    flex-direction: column;
+  }
+
+  .dashboard-sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+    gap: 10px;
+    padding: 14px;
+    border-right: none;
+    border-bottom: 1px solid #1e293b;
+  }
+
+  .dashboard-user-card {
+    flex: 1 1 220px;
+  }
+
+  .dashboard-nav {
+    flex: 1 1 320px;
+    flex-direction: row;
+  }
+
+  .dashboard-nav-btn {
+    flex: 1;
+    height: 38px;
+    padding: 0 10px;
+    text-align: center;
+  }
+
+  .dashboard-logout {
+    flex: 0 0 120px;
+    height: 38px;
+    margin-top: 0;
+  }
+
+  .dashboard-content {
+    padding: 16px 14px 18px;
+  }
+
+  .dashboard-placeholder {
+    min-height: 220px;
+  }
+
+  .dashboard-home {
+    height: auto;
+  }
+
+  .dashboard-content-home {
+    height: auto;
+  }
+
+  .home-chart-card {
+    flex: 0 0 auto;
+    min-height: 280px;
+    padding: 14px 12px 8px;
+  }
+
+  .home-toolbox-card {
+    flex: 0 0 auto;
+    min-height: 130px;
+  }
+
+  .bars-2d-track {
+    gap: 5px;
+    min-height: 180px;
+    padding: 4px 0 0;
+  }
+
+  .bar-pill {
+    width: 32px;
+  }
+
+  .bar-label {
+    width: 58px;
+    font-size: 10px;
+  }
+
+  .diff-problems-popover {
+    top: 52px;
+    right: 8px;
+    width: min(290px, calc(100% - 16px));
+  }
+
+  .btn-start-record {
+    padding: 10px 20px;
+  }
+}
+

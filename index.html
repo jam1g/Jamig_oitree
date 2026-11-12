@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="./css/sidebar.css" />
   <link rel="stylesheet" href="./css/canvas.css" />
   <link rel="stylesheet" href="./css/modal.css" />
+  <link rel="stylesheet" href="./css/root-nav.css" />
+  <link rel="stylesheet" href="./css/dashboard.css" />
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css" />
@@ -23,8 +25,99 @@
   <div class="auth-gate" id="auth-gate" role="status" aria-live="polite">
     <div class="auth-gate-brand">oitree</div>
     <p class="auth-gate-tip" id="auth-gate-tip">正在验证登录状态…</p>
+    <!-- 云端数据加载失败 / 超时后的重试与降级入口 -->
+    <div class="auth-gate-actions" id="auth-gate-actions" hidden>
+      <button type="button" class="btn btn-primary" id="auth-gate-retry">重试同步</button>
+      <button type="button" class="btn btn-ghost" id="auth-gate-skip">先使用本地数据进入</button>
+    </div>
   </div>
 
+  <!-- ========== 视图一：个人中心工作台 ========== -->
+  <div class="app-view active" id="dashboard-view" aria-hidden="false">
+    <div class="dashboard-shell">
+      <aside class="dashboard-sidebar">
+        <div class="dashboard-user-card">
+          <div class="dashboard-avatar" id="dashboard-avatar">J</div>
+          <div class="dashboard-user-meta">
+            <div class="dashboard-user-name" id="dashboard-user-name">Jamig</div>
+            <div class="dashboard-user-email" id="dashboard-user-email">lzhr128@126.com</div>
+          </div>
+        </div>
+
+        <nav class="dashboard-nav" aria-label="个人中心导航">
+          <button type="button" class="dashboard-nav-btn is-active" data-panel="home">首页</button>
+          <button type="button" class="dashboard-nav-btn" data-panel="lists">题单管理</button>
+          <button type="button" class="dashboard-nav-btn" data-panel="prefs">偏好设置</button>
+          <button type="button" class="dashboard-nav-btn" data-panel="account">账号设置</button>
+        </nav>
+
+        <button type="button" class="dashboard-logout" id="dashboard-logout">退出登录</button>
+      </aside>
+
+      <section class="dashboard-content">
+        <div class="dashboard-panel is-active dashboard-home" id="panel-home" data-panel="home">
+          <div class="dashboard-content-home">
+            <!-- 上半区：洛谷 8 阶 3D 天梯柱状图 -->
+            <div class="home-card home-chart-card" id="home-chart-card">
+              <div class="chart-header">
+                <div class="chart-title">难度分布</div>
+                <div class="chart-total">
+                  <small>共</small>
+                  <span id="total-problems-num">0</span>
+                  <small>题</small>
+                </div>
+              </div>
+
+              <div class="bars-2d-track" id="bars-track" role="list" aria-label="洛谷 8 阶难度分布"></div>
+
+              <!-- 点击柱体弹出的题目清单浮窗 -->
+              <div class="diff-problems-popover" id="diff-popover" hidden>
+                <div class="popover-header">
+                  <span class="popover-title">
+                    <span class="popover-dot" id="popover-dot" aria-hidden="true"></span>
+                    <span id="popover-diff-title">—</span>
+                  </span>
+                  <button type="button" class="popover-close" id="popover-close-btn" aria-label="关闭">&times;</button>
+                </div>
+                <ul class="popover-list" id="popover-problems-list"></ul>
+              </div>
+            </div>
+
+            <!-- 下半区：工具箱预留插槽 -->
+            <div class="home-card home-toolbox-card" id="home-toolbox-card">
+              <div class="toolbox-placeholder">
+                <span class="toolbox-icon" aria-hidden="true">🧰</span>
+                <span class="toolbox-text">工具箱 · 功能扩展区 (建设中)</span>
+              </div>
+            </div>
+
+            <!-- 右下角：开始记录 -->
+            <div class="home-footer-actions">
+              <button type="button" class="btn-start-record" id="btn-start-record">
+                <span>开始记录</span>
+                <span aria-hidden="true">➔</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="dashboard-panel" id="panel-lists" data-panel="lists">
+          <h2>题单管理</h2>
+          <div class="dashboard-placeholder">题单管理功能即将上线</div>
+        </div>
+        <div class="dashboard-panel" id="panel-prefs" data-panel="prefs">
+          <h2>偏好设置</h2>
+          <div class="dashboard-placeholder">偏好设置功能即将上线</div>
+        </div>
+        <div class="dashboard-panel" id="panel-account" data-panel="account">
+          <h2>账号设置</h2>
+          <div class="dashboard-placeholder">账号设置功能即将上线</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ========== 视图二：算法技能树画布 ========== -->
+  <div class="app-view" id="canvas-view" aria-hidden="true">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-inner">
       <header class="sidebar-header">
@@ -32,7 +125,7 @@
       </header>
       <div class="sidebar-label">
         <span>题库分类</span>
-        <span class="sidebar-label-hint">拖拽排序 · 双击进入设置</span>
+        <span class="sidebar-label-hint">拖拽排序</span>
       </div>
       <ul class="category-list" id="category-list" role="tablist"></ul>
       <footer class="sidebar-footer">
@@ -57,35 +150,55 @@
 
       <div class="toolbar-actions">
         <button id="add-node" type="button" class="btn btn-primary">＋ 增加题目</button>
-        <button id="auto-layout" type="button" class="btn btn-ghost">⇅ 一键整理布局</button>
-        <button id="reset-view" type="button" class="btn btn-ghost">⌖ 重置视图</button>
+        <button
+          id="btn-clean-view"
+          type="button"
+          class="btn btn-ghost"
+          title="一键规整卡片排版并居中镜头"
+        >
+          <span aria-hidden="true">⌖</span> 整理视图
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost drawer-toggle"
+          id="drawer-toggle"
+          title="打开题目列表抽屉"
+          aria-label="打开题目列表抽屉"
+        >
+          <span aria-hidden="true">📋</span> 题目列表
+        </button>
       </div>
 
       <div class="toolbar-user" id="toolbar-user">
-        <!-- ☁️ 云同步状态（仅登录后显示） -->
-        <div class="sync-status" id="sync-status" hidden role="status" aria-live="polite">
+        <!-- ☁️ 云同步状态（仅登录后显示）：固定宽度图标胶囊，不展示长文字 -->
+        <button
+          type="button"
+          class="sync-status"
+          id="sync-status"
+          hidden
+          aria-label="云端同步状态"
+          data-tooltip="已与 Supabase 云端同步 · 刚刚"
+        >
+          <span class="sync-icon" id="sync-status-icon" aria-hidden="true">☁️</span>
           <span class="sync-dot" aria-hidden="true"></span>
-          <span class="sync-status-text" id="sync-status-text">☁️ 云端已同步</span>
-        </div>
+        </button>
+        <span class="sr-only" id="sync-status-text" role="status" aria-live="polite"></span>
         <!-- 未登录状态 -->
         <button type="button" class="btn btn-ghost toolbar-auth-btn" id="toolbar-auth-btn" title="登录 / 注册" aria-label="登录 / 注册">
           👤 登录 / 注册
         </button>
         <!-- 已登录状态（默认隐藏） -->
         <div class="toolbar-user-profile hidden" id="toolbar-user-profile">
-          <button type="button" class="btn btn-ghost toolbar-user-btn" id="toolbar-user-btn" aria-label="用户菜单" aria-expanded="false" aria-controls="toolbar-user-menu">
+          <button type="button" class="btn btn-ghost toolbar-user-btn" id="toolbar-user-btn" title="返回个人中心" aria-label="返回个人中心" aria-expanded="false" aria-controls="toolbar-user-menu">
             <span class="user-avatar">👤</span>
             <span class="user-name" id="toolbar-user-name">用户</span>
           </button>
           <div class="toolbar-user-menu hidden" id="toolbar-user-menu">
-            <button type="button" class="btn btn-ghost btn-block btn-sm" id="btn-logout" title="退出登录">🚪 退出登录</button>
+            <button type="button" class="btn btn-ghost btn-block btn-sm" id="btn-logout" title="退出登录">退出登录</button>
           </div>
         </div>
       </div>
 
-      <button type="button" class="drawer-toggle" id="drawer-toggle" title="题目列表" aria-label="打开题目列表">
-        <span aria-hidden="true">📋</span>
-      </button>
     </header>
 
     <main id="canvas" class="canvas" aria-label="节点画布">
@@ -120,6 +233,9 @@
           <marker id="arrow-preview" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">
             <path d="M0,0.6 L10,5 L0,9.4 Z" fill="#7dd3fc"></path>
           </marker>
+          <marker id="arrow-highlight" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">
+            <path d="M0,0.6 L10,5 L0,9.4 Z" fill="#38bdf8"></path>
+          </marker>
         </defs>
         <g id="links-layer"></g>
         <g id="preview-layer"></g>
@@ -130,8 +246,18 @@
       <div class="zoom-badge" id="zoom-badge" title="点击重置为 100%">
         <span id="zoom-value">100%</span>
       </div>
+
+      <!-- ========== 根题目 / 专题导航面板 ========== -->
+      <aside class="root-nav" id="root-nav" hidden aria-label="根题目与专题导航">
+        <header class="root-nav-header">
+          <span class="root-nav-title">根题目 / 专题列表</span>
+          <button type="button" class="root-nav-reset" id="root-nav-reset">全部显示</button>
+        </header>
+        <div class="root-nav-list" id="root-nav-list"></div>
+      </aside>
     </main>
   </div>
+  </div><!-- /#canvas-view -->
 
   <div class="drawer-backdrop" id="drawer-backdrop"></div>
   <aside class="drawer" id="drawer" aria-label="题目清单">
@@ -274,6 +400,31 @@
     </form>
   </div>
 
+  <!-- ========== 专题重命名弹窗 ========== -->
+  <div class="modal-backdrop" id="topic-modal" hidden>
+    <form class="modal modal-topic" id="topic-form" novalidate>
+      <header class="modal-header">
+        <div class="modal-header-left">
+          <h2>修改专题名称</h2>
+        </div>
+        <button type="button" class="modal-close" id="topic-modal-close" aria-label="关闭">×</button>
+      </header>
+      <div class="modal-body">
+        <label class="field">
+          <span class="field-label" id="topic-field-label">修改专题名称</span>
+          <input id="topic-field-name" type="text" maxlength="32" autocomplete="off" placeholder="例如：区间贪心基础" />
+        </label>
+        <p class="topic-hint" id="topic-field-hint">留空则使用默认名称（首道根题目）。</p>
+      </div>
+      <footer class="modal-footer">
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" id="topic-modal-cancel">取消</button>
+          <button type="submit" class="btn btn-primary" id="topic-modal-submit">保存</button>
+        </div>
+      </footer>
+    </form>
+  </div>
+
   <!-- ========== 沉浸式大编辑器（Zen Mode） ========== -->
   <div class="modal-backdrop zen-backdrop" id="zen-modal" hidden>
     <div class="zen-container" role="dialog" aria-modal="true" aria-label="沉浸式大编辑器">
@@ -401,6 +552,9 @@
     </form>
   </div>
 
+  <!-- 根题目悬停清单（固定在视口层，避免被面板滚动区域裁剪） -->
+  <div class="root-nav-popover" id="root-nav-popover" hidden role="tooltip"></div>
+
   <!-- ========== 外部 CDN 库 ========== -->
   <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -414,5 +568,6 @@
   <script defer src="./js/auth.js"></script>
   <script defer src="./js/sync.js"></script>
   <script defer src="./js/app.js"></script>
+  <script defer src="./js/dashboard.js"></script>
 </body>
 </html>

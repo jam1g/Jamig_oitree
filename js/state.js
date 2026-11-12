@@ -20,6 +20,11 @@ var BASE_GRID = 26;
 var STORAGE_KEY = "oitree.state.v4";
 var LEGACY_KEYS = ["oitree.state.v3", "oitree.state.v2"];
 
+/* 分类布局版本：5 = 横向 LR + 连通块隔离 + 同列固定间距
+ *                  + 单终点列回归连通块中心线 + 连线控制点紧凑 Clamp。
+ * 旧数据（无此字段或版本较低）在首次加载时自动迁移一次，之后保留用户手动位置。 */
+var CATEGORY_LAYOUT_VERSION = 5;
+
 /* =========================================================
  *  🎨 洛谷官方 9 级难度字典
  *  - value      : 数据存储键（稳定，不改动以兼容旧数据）
@@ -83,6 +88,8 @@ var session = {
 
 /* 内部：持久化防抖 */
 var persistTimer = null;
+/* 160ms 合并窗口内是否出现过“内容型变更”，用于决定要不要通知云同步 */
+var persistCloudPending = false;
 
 /* =========================================================
  *  时间工具
@@ -310,8 +317,11 @@ function createCategory(name, meta) {
     description: typeof meta.description === "string" ? meta.description : "",
     nodes: [],
     edges: [],
+    /* 连通块专题自定义名称：{ 根题目ID: "自定义专题名" } */
+    topicNames: {},
     view: { x: 0, y: 0, scale: 1 },
     nodeCount: 0,
+    layoutVersion: CATEGORY_LAYOUT_VERSION,
   };
 }
 
@@ -322,6 +332,27 @@ function createDefaultState() {
     activeCategoryId: categories[0].id,
     categories: categories,
   };
+}
+
+/**
+ * 清洗连通块专题自定义名称表：{ [根题目ID]: "自定义专题名" }
+ * 空值 / 非法值直接丢弃，保证导航标题始终有可回退的默认名称。
+ */
+function normalizeImportedTopicNames(raw) {
+  var out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+
+  Object.keys(raw).forEach(function (key) {
+    var value = raw[key];
+    if (typeof value !== "string") return;
+
+    var name = value.trim().slice(0, 32);
+    if (!name) return;
+
+    out[String(key)] = name;
+  });
+
+  return out;
 }
 
 function ensureStateValid() {
@@ -341,6 +372,8 @@ function ensureStateValid() {
     if (typeof cat.description !== "string") cat.description = "";
     if (!Array.isArray(cat.nodes)) cat.nodes = [];
     if (!Array.isArray(cat.edges)) cat.edges = [];
+    /* 🏷️ 兼容旧数据：补齐 / 清洗连通块专题自定义名称 */
+    cat.topicNames = normalizeImportedTopicNames(cat.topicNames);
     if (!cat.view || typeof cat.view !== "object") {
       cat.view = { x: 0, y: 0, scale: 1 };
     }
@@ -393,17 +426,43 @@ function syncActiveCategoryFromScene() {
 
   cat.view = { x: view.x, y: view.y, scale: view.scale };
   cat.nodeCount = session.nodeCount;
+
+  /* 用户手动拖拽 / 增删节点后，标记为当前布局版本，避免下次加载被自动重排 */
+  if (typeof CATEGORY_LAYOUT_VERSION === "number") {
+    cat.layoutVersion = CATEGORY_LAYOUT_VERSION;
+  }
 }
 
-function persist() {
+/**
+ * 本地持久化（160ms 防抖）。
+ *
+ * options.cloud:
+ * - true（默认）：内容型变更，落本地后会通知 sync.js 上云；
+ * - false：仅视图 / 选中 / 镜头等只读动作，只写 localStorage，不触发云端上传。
+ *
+ * 同一防抖窗口内只要发生过一次内容型变更，最终仍会上云（避免被随后的
+ * 镜头保存吞掉）。
+ */
+function persist(options) {
+  var opts = options && typeof options === "object" ? options : {};
+  var cloud = opts.cloud !== false;
+
   syncActiveCategoryFromScene();
+
+  if (cloud) persistCloudPending = true;
+
   clearTimeout(persistTimer);
   persistTimer = setTimeout(function () {
+    var shouldSyncCloud = persistCloudPending;
+    persistCloudPending = false;
+
     saveStateSilently();
 
     /* 通知云同步模块（js/sync.js）：本地已完成一次保存 */
-    if (typeof window.CustomEvent === "function") {
-      window.dispatchEvent(new CustomEvent("oitree:persist"));
+    if (shouldSyncCloud && typeof window.CustomEvent === "function") {
+      window.dispatchEvent(
+        new CustomEvent("oitree:persist", { detail: { cloud: true } })
+      );
     }
   }, 160);
 }
@@ -438,6 +497,7 @@ function exportCategory(cat) {
     luoguUrl: cat.luoguUrl || "",
     description: cat.description || "",
     nodeCount: cat.nodeCount || 0,
+    topicNames: normalizeImportedTopicNames(cat.topicNames),
     nodes: (cat.nodes || []).map(function (n) {
       var data = normalizeNodeTimes(Object.assign({}, n.data));
       return {

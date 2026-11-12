@@ -12,6 +12,8 @@
   flex: 1;
   overflow: hidden;
   cursor: default;
+  /* 建立独立层叠上下文：内部连线/卡片层级不受外部全屏遮罩干扰 */
+  isolation: isolate;
   background-color: #0b1017;
   background-image: radial-gradient(circle at 1.2px 1.2px, var(--dot) 1.2px, transparent 0);
   background-repeat: repeat;
@@ -411,17 +413,32 @@
  *  连线
  * ========================================================= */
 
-.link-line {
-  stroke: #4a7fd4;
-  stroke-width: 2.2;
+/* 双层 SVG 连线组：底层 Halo + 顶层主题线 */
+.edge-group {
+  transition: opacity 220ms ease;
+}
+
+.edge-halo {
   fill: none;
+  stroke: #0b1017;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.edge-line {
+  fill: none;
+  stroke: #4a7fd4;
+  stroke-width: 2;
   stroke-linecap: round;
   pointer-events: stroke;
   cursor: pointer;
-  transition: stroke 140ms ease, opacity 260ms ease;
+  transition: stroke 140ms ease, stroke-width 140ms ease, opacity 220ms ease,
+    filter 220ms ease;
 }
 
-.link-line:hover {
+.edge-line:hover {
   stroke: #7dd3fc;
 }
 
@@ -470,19 +487,43 @@
   stroke: #fff;
 }
 
-/* 连线聚光灯效果 */
-.link-line.is-dimmed {
+/* 连线聚光灯 / 悬停聚焦 */
+.edge-group.is-dimmed {
   opacity: 0.12;
+}
+
+.edge-group.is-dimmed .edge-line {
   pointer-events: none;
 }
 
-.link-line.is-highlighted {
+.edge-group.is-highlighted .edge-line {
   stroke: #7dd3fc;
   stroke-width: 2.8;
   filter: drop-shadow(0 0 6px rgba(125, 211, 252, 0.75));
 }
 
-.link-del.is-dimmed {
+/* 悬停血统高光：霓虹点亮 */
+.edge-group.highlight {
+  opacity: 1 !important;
+}
+
+.edge-group.highlight .edge-line {
+  stroke: #38bdf8 !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 6px #38bdf8);
+}
+
+.edge-group.is-dimmed .link-del {
+  pointer-events: none;
+  opacity: 0 !important;
+}
+
+/* 聚焦时，未命中的连线组半透明虚化 */
+.canvas.is-focused .edge-group:not(.highlight) {
+  opacity: 0.15 !important;
+}
+
+.canvas.is-focused .edge-group:not(.highlight) .link-del {
   pointer-events: none;
   opacity: 0 !important;
 }
@@ -525,6 +566,17 @@
   touch-action: none;
   opacity: 0;
   transform: translate(-50%, -50%) scale(0.78);
+  transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+    top 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
+    opacity 260ms ease-out, box-shadow 260ms ease, border-color 260ms ease,
+    filter 260ms ease;
+}
+
+/* 程序化整理动画 / 手动拖拽期间关闭 left/top 过渡：
+ * 位置由逐帧插值直接驱动，避免过渡叠加造成拖影与连线脱节。 */
+.canvas.is-layout-animating .node,
+.node.is-dragging {
   transition: transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
     opacity 260ms ease-out, box-shadow 260ms ease, border-color 260ms ease,
     filter 260ms ease;
@@ -876,6 +928,32 @@
 /* 标题给徽标留出呼吸空间，避免长标题与徽标重叠 */
 .node-title {
   padding-right: 2px;
+}
+
+/* =========================================================
+ *  悬停血统高光聚焦（节点）
+ * ========================================================= */
+
+.node.highlight {
+  border-color: #38bdf8 !important;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.4) !important;
+  z-index: 40;
+}
+
+/* 聚焦时：非血统节点半透明虚化 */
+.canvas.is-focused .node:not(.highlight) {
+  opacity: 0.15 !important;
+  filter: grayscale(0.7) brightness(0.8);
+}
+
+/* 聚焦时：血统节点保持高亮（覆盖搜索聚光灯的 is-dimmed） */
+.canvas.is-focused .node.highlight {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+.canvas.is-focused .node:not(.highlight) .node-status-badge {
+  opacity: 0.3;
 }
 
 /* =========================================================

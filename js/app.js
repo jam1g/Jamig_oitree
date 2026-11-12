@@ -39,8 +39,7 @@
   var previewLayerEl = $("preview-layer");
   var worldEl = $("world");
   var addButton = $("add-node");
-  var layoutButton = $("auto-layout");
-  var resetViewButton = $("reset-view");
+  var cleanViewButton = $("btn-clean-view");
   var zoomBadge = $("zoom-badge");
   var zoomValueEl = $("zoom-value");
   var arrowMarkerEl = $("arrow");
@@ -85,7 +84,22 @@
   var catLuoguInput = $("cat-field-luogu");
   var catDescInput = $("cat-field-desc");
 
+  /* 🏷️ 连通块专题重命名弹窗 */
+  var topicModal = $("topic-modal");
+  var topicForm = $("topic-form");
+  var topicModalCloseBtn = $("topic-modal-close");
+  var topicModalCancelBtn = $("topic-modal-cancel");
+  var topicFieldLabel = $("topic-field-label");
+  var topicFieldName = $("topic-field-name");
+  var topicFieldHint = $("topic-field-hint");
+
   var readerModal = $("reader-modal");
+
+  /* 根题目导航面板 */
+  var rootNav = $("root-nav");
+  var rootNavList = $("root-nav-list");
+  var rootNavReset = $("root-nav-reset");
+  var rootNavPopover = $("root-nav-popover");
 
   /* =========================================================
    *  模块 DOM 绑定
@@ -171,10 +185,12 @@
   var dragOverId = null;
   var dragOverPos = null;
 
-  var lastClickTs = 0;
-  var lastClickId = null;
-
   var catModalMode = "edit";
+  /* 当前正在重命名的连通块专题：{ componentKey, topicKey, defaultName } */
+  var topicRenameTarget = null;
+
+  /* 工作台是否已完成首次渲染（登录 / 会话恢复期间保持 false） */
+  var workspaceRendered = false;
 
   /* =========================================================
    *  场景变化时的刷新
@@ -184,15 +200,54 @@
     renderSidebar();
     renderDrawer();
     runSearch();
+    buildRootNav();
   }
 
   CanvasAPI.setOnSceneChange(refreshSceneUI);
   EditorAPI.setEditorOnSceneChange(refreshSceneUI);
 
-  /* ☁️ 云端数据应用后：重新加载画布并刷新侧栏 / 抽屉 / 搜索 */
-  window.addEventListener("oitree:state-applied", function () {
-    CanvasAPI.loadActiveCategory();
+  /* 工作台首次渲染：只做一次，保证“云端数据就绪 → 一次性挂载 DOM”。
+   * 之后云端数据再次应用（重试 / 多端同步）才做增量刷新。 */
+  function renderWorkspace(autoFocusFirst) {
+    workspaceRendered = true;
+
+    CanvasAPI.loadActiveCategory({ autoFocusFirst: !!autoFocusFirst });
     refreshSceneUI();
+    CanvasAPI.applyView();
+    CanvasAPI.updateCanvasInfo();
+  }
+
+  /* 渲染并等待浏览器完成首帧绘制（连续两帧 + 兜底定时器） */
+  function renderWorkspaceAndWait() {
+    renderWorkspace(true);
+
+    return new Promise(function (resolve) {
+      var settled = false;
+
+      function done() {
+        if (settled) return;
+        settled = true;
+        resolve();
+      }
+
+      if (window.requestAnimationFrame) {
+        window.requestAnimationFrame(function () {
+          window.requestAnimationFrame(done);
+        });
+      }
+
+      /* 后台标签页 rAF 不触发时的兜底 */
+      window.setTimeout(done, 600);
+    });
+  }
+
+  /* ☁️ 云端数据应用后：已渲染过的工作台做刷新；
+   * 首次渲染由登录 / 会话恢复流程在数据就绪后统一触发（OITreeApp.renderWorkspaceAndWait），
+   * 避免默认分类 / 空白画布先闪一下再被真实数据推翻重绘。 */
+  window.addEventListener("oitree:state-applied", function () {
+    if (!workspaceRendered) return;
+    /* 云端刷新只做增量重绘，不打断用户当前过滤与视角 */
+    renderWorkspace(false);
   });
 
   CanvasAPI.setNodeClickHandler(EditorAPI.openProblemModal);
@@ -343,6 +398,285 @@
   }
 
   /* =========================================================
+   *  根题目 / 专题导航面板
+   * ========================================================= */
+
+  var rootNavComponents = [];
+  var rootNavActiveKey = null;
+  var rootNavRootsMap = Object.create(null);
+
+  function buildDefaultTopicTitle(roots) {
+    if (!roots || roots.length === 0) return "未命名专题";
+    if (roots.length === 1) return roots[0].title;
+
+    /* 多根题：极简单行，绝不拼接所有长名字 */
+    return roots[0].title + " 等 (" + roots.length + " 根题)";
+  }
+
+  /**
+   * 连通块专题的稳定标识：优先使用最小根题目 ID。
+   * 根题目 ID 在同一分类内稳定，新增下游节点 / 分支合并时名称仍可复用。
+   */
+  function getTopicKey(comp) {
+    if (comp && comp.roots && comp.roots.length) {
+      var ids = comp.roots
+        .map(function (root) { return Number(root.id); })
+        .filter(function (id) { return Number.isFinite(id); })
+        .sort(function (a, b) { return a - b; });
+
+      if (ids.length) return String(ids[0]);
+    }
+
+    return "comp:" + (comp && comp.key ? comp.key : "");
+  }
+
+  function getTopicCustomName(comp) {
+    var cat = typeof getActiveCategory === "function" ? getActiveCategory() : null;
+    if (!cat || !cat.topicNames || typeof cat.topicNames !== "object") return "";
+
+    var name = cat.topicNames[getTopicKey(comp)];
+    return typeof name === "string" ? name.trim() : "";
+  }
+
+  function buildRootNavTitle(comp) {
+    var custom = getTopicCustomName(comp);
+    if (custom) return custom;
+
+    return buildDefaultTopicTitle(comp && comp.roots);
+  }
+
+  /* 极简齿轮 SVG：避免 emoji 在不同平台上的视觉差异 */
+  var TOPIC_SETTINGS_ICON =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="3"></circle>' +
+    '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83' +
+    'l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0' +
+    'v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83' +
+    'l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09' +
+    'a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83' +
+    'l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09' +
+    'a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83' +
+    'l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4' +
+    'h-.09a1.65 1.65 0 0 0-1.51 1z"></path>' +
+    "</svg>";
+
+  function buildTopicSettingsButton(comp) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "root-nav-item-settings";
+    btn.dataset.componentKey = comp.key;
+    btn.title = "设置专题名称";
+    btn.setAttribute("aria-label", "设置专题名称");
+    btn.innerHTML = TOPIC_SETTINGS_ICON;
+
+    /* 设置按钮与卡片是兄弟节点；仍显式阻止冒泡，绝不触发“切换连通块” */
+    btn.addEventListener("pointerdown", function (event) {
+      event.stopPropagation();
+    });
+
+    btn.addEventListener("click", function (event) {
+      event.stopPropagation();
+      event.preventDefault();
+      openTopicRenameModal(comp);
+    });
+
+    return btn;
+  }
+
+  function buildRootNavFullTitle(roots) {
+    return (roots || [])
+      .map(function (root) { return root.title; })
+      .join(" · ");
+  }
+
+  function hideRootPopover() {
+    if (rootNavPopover) rootNavPopover.hidden = true;
+  }
+
+  function showRootPopover(item) {
+    if (!rootNavPopover || !item) return;
+
+    var roots = rootNavRootsMap[item.dataset.componentKey] || [];
+    if (!roots.length) return;
+
+    rootNavPopover.replaceChildren();
+
+    var heading = document.createElement("div");
+    heading.className = "root-nav-popover-title";
+    heading.textContent = roots.length > 1
+      ? "根题目（" + roots.length + " 道）"
+      : "根题目";
+    rootNavPopover.appendChild(heading);
+
+    roots.forEach(function (root) {
+      var row = document.createElement("span");
+      row.className = "root-nav-popover-item";
+      row.textContent = root.title;
+      rootNavPopover.appendChild(row);
+    });
+
+    var rect = item.getBoundingClientRect();
+    rootNavPopover.hidden = false;
+    rootNavPopover.style.top = rect.top + rect.height / 2 + "px";
+    rootNavPopover.style.right =
+      window.innerWidth - rect.left + 12 + "px";
+  }
+
+  function buildRootNav() {
+    if (!rootNav || !rootNavList) return;
+
+    var components =
+      window.OITreeCanvas && typeof window.OITreeCanvas.getGraphComponents === "function"
+        ? window.OITreeCanvas.getGraphComponents()
+        : [];
+
+    rootNavComponents = components;
+    rootNavRootsMap = Object.create(null);
+    hideRootPopover();
+
+    var filterIds =
+      window.OITreeCanvas && typeof window.OITreeCanvas.getFilterNodeIds === "function"
+        ? window.OITreeCanvas.getFilterNodeIds()
+        : null;
+
+    var filterKey = filterIds && filterIds.length
+      ? filterIds.slice().sort(function (a, b) { return a - b; }).join(",")
+      : null;
+
+    /* 过滤器对应的连通块已不存在（切换分类 / 拓扑变化）→ 自动恢复全部 */
+    if (filterKey) {
+      var stillExists = components.some(function (comp) {
+        return comp.key === filterKey;
+      });
+
+      if (!stillExists) {
+        CanvasAPI.setComponentFilter(null);
+        filterKey = null;
+      }
+    }
+
+    rootNavActiveKey = filterKey;
+
+    if (!components.length) {
+      rootNav.hidden = true;
+      rootNavList.replaceChildren();
+      return;
+    }
+
+    rootNav.hidden = false;
+    rootNavList.replaceChildren();
+
+    components.forEach(function (comp) {
+      rootNavRootsMap[comp.key] = comp.roots;
+
+      var cell = document.createElement("div");
+      cell.className = "root-nav-cell";
+      cell.dataset.componentKey = comp.key;
+
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "root-nav-item";
+      item.dataset.componentKey = comp.key;
+      if (comp.key === filterKey) item.classList.add("is-active");
+
+      var title = document.createElement("span");
+      title.className = "root-nav-item-title";
+      title.textContent = buildRootNavTitle(comp);
+      title.title = buildRootNavFullTitle(comp.roots);
+
+      var sub = document.createElement("span");
+      sub.className = "root-nav-item-sub";
+      sub.textContent = comp.nodeCount + " 题";
+
+      item.append(title, sub);
+      cell.append(item, buildTopicSettingsButton(comp));
+      rootNavList.appendChild(cell);
+    });
+  }
+
+  function handleRootNavClick(event) {
+    var item = event.target.closest
+      ? event.target.closest(".root-nav-item")
+      : null;
+    if (!item) return;
+
+    var key = item.dataset.componentKey;
+    var comp = null;
+
+    for (var i = 0; i < rootNavComponents.length; i++) {
+      if (rootNavComponents[i].key === key) {
+        comp = rootNavComponents[i];
+        break;
+      }
+    }
+
+    if (!comp) return;
+
+    hideRootPopover();
+
+    rootNavActiveKey = key;
+
+    /* ① 显示当前连通块，隐藏其他无关节点 */
+    CanvasAPI.setComponentFilter(comp.nodeIds);
+
+    /* ②~⑤ 自动整理当前可见题目 → 重绘连线 → 镜头居中 → 坐标回写持久化：
+     * autoLayoutVisible 仅针对当前可见节点集合重新计算 X/Y，
+     * 逐帧播放卡片归位动画并同步重绘连线，最终 persist() 写入云端同步数据。 */
+    if (typeof CanvasAPI.autoLayoutVisible === "function") {
+      CanvasAPI.autoLayoutVisible();
+    } else {
+      CanvasAPI.focusComponent(comp.nodeIds);
+    }
+
+    var items = rootNavList.querySelectorAll(".root-nav-item");
+    items.forEach(function (el) {
+      el.classList.toggle("is-active", el.dataset.componentKey === key);
+    });
+  }
+
+  function handleRootNavReset() {
+    hideRootPopover();
+
+    rootNavActiveKey = null;
+    CanvasAPI.setComponentFilter(null);
+
+    if (rootNavList) {
+      rootNavList.querySelectorAll(".root-nav-item").forEach(function (el) {
+        el.classList.remove("is-active");
+      });
+    }
+
+    /* “全部显示”同样触发一键整理布局：整张题单重新分层排版 + 平滑运镜 */
+    if (typeof CanvasAPI.autoLayoutVisible === "function") {
+      CanvasAPI.autoLayoutVisible();
+    } else {
+      CanvasAPI.fitToView();
+    }
+  }
+
+  function handleRootNavPointerOver(event) {
+    var item = event.target.closest
+      ? event.target.closest(".root-nav-item")
+      : null;
+    if (!item) return;
+    if (event.relatedTarget && item.contains(event.relatedTarget)) return;
+
+    showRootPopover(item);
+  }
+
+  function handleRootNavPointerOut(event) {
+    var item = event.target.closest
+      ? event.target.closest(".root-nav-item")
+      : null;
+    if (!item) return;
+    if (event.relatedTarget && item.contains(event.relatedTarget)) return;
+
+    hideRootPopover();
+  }
+
+  /* =========================================================
    *  侧边栏渲染
    * ========================================================= */
 
@@ -382,149 +716,220 @@
         countEl.className = "cat-count";
         var realCount = isActive ? nodes.size : (cat.nodes || []).length;
         countEl.textContent = String(realCount);
+        countEl.title = realCount + " 道题目";
 
         var actions = document.createElement("span");
         actions.className = "cat-actions";
+        actions.setAttribute("role", "group");
+        actions.setAttribute("aria-label", "分类操作");
 
-        var expBtn = document.createElement("button");
-        expBtn.type = "button";
-        expBtn.className = "cat-btn export";
-        expBtn.textContent = "⇩";
-        expBtn.title = "导出 .oitree";
-        expBtn.setAttribute("aria-label", "导出目录为 .oitree");
-        expBtn.draggable = false;
-        expBtn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          exportCategory(cat);
-        });
-
-        actions.appendChild(expBtn);
+        /* 悬停浮动操作栏：设置 / 下载（事件由 #category-list 统一委托） */
+        actions.appendChild(
+          buildCategoryActionButton("settings", "⚙", "分类设置", "打开分类设置")
+        );
+        actions.appendChild(
+          buildCategoryActionButton(
+            "download",
+            "⇩",
+            "下载 .oitree",
+            "导出该分类为 .oitree 备份"
+          )
+        );
 
         li.append(nameEl, countEl, actions);
-
-        li.addEventListener("click", function (e) {
-          if (e.target.closest(".cat-btn")) return;
-          if (e.target.closest(".cat-name-input")) return;
-
-          var now = Date.now();
-          if (lastClickId === cat.id && now - lastClickTs < 300) {
-            lastClickTs = now;
-            return;
-          }
-          lastClickTs = now;
-          lastClickId = cat.id;
-
-          switchCategory(cat.id);
-        });
-
-        li.addEventListener("dblclick", function (e) {
-          if (e.target.closest(".cat-btn")) return;
-          if (e.target.closest(".cat-name-input")) return;
-          e.preventDefault();
-          openCategoryModal(cat.id);
-        });
-
-        li.addEventListener("dragstart", function (e) {
-          if (e.target.closest(".cat-btn") || e.target.closest(".cat-name-input")) {
-            e.preventDefault();
-            return;
-          }
-
-          dragSrcId = cat.id;
-          dragOverId = null;
-          dragOverPos = null;
-
-          setTimeout(function () {
-            li.classList.add("is-dragging");
-          }, 0);
-
-          try {
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData("text/plain", cat.id);
-          } catch (_) {
-            /* 忽略 */
-          }
-        });
-
-        li.addEventListener("dragend", function () {
-          clearDragIndicators();
-          dragSrcId = null;
-          dragOverId = null;
-          dragOverPos = null;
-        });
-
-        li.addEventListener("dragover", function (e) {
-          if (!dragSrcId || dragSrcId === cat.id) return;
-
-          e.preventDefault();
-          try {
-            e.dataTransfer.dropEffect = "move";
-          } catch (_) {
-            /* 忽略 */
-          }
-
-          var rect = li.getBoundingClientRect();
-          var isAbove = e.clientY < rect.top + rect.height / 2;
-
-          var items = categoryList.querySelectorAll(".category-item");
-          items.forEach(function (el) {
-            if (el !== li) el.classList.remove("drop-above", "drop-below");
-          });
-
-          li.classList.toggle("drop-above", isAbove);
-          li.classList.toggle("drop-below", !isAbove);
-
-          dragOverId = cat.id;
-          dragOverPos = isAbove ? "above" : "below";
-        });
-
-        li.addEventListener("dragleave", function (e) {
-          if (!li.contains(e.relatedTarget)) {
-            li.classList.remove("drop-above", "drop-below");
-          }
-        });
-
-        li.addEventListener("drop", function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-
-          if (!dragSrcId || dragSrcId === cat.id) {
-            clearDragIndicators();
-            return;
-          }
-
-          var srcIdx = state.categories.findIndex(function (c) { return c.id === dragSrcId; });
-          if (srcIdx < 0) {
-            clearDragIndicators();
-            return;
-          }
-
-          var movedArr = state.categories.splice(srcIdx, 1);
-          var moved = movedArr[0];
-
-          var dstIdx = state.categories.findIndex(function (c) { return c.id === cat.id; });
-          if (dstIdx < 0) {
-            state.categories.splice(srcIdx, 0, moved);
-            clearDragIndicators();
-            return;
-          }
-
-          if (dragOverPos === "below") dstIdx += 1;
-
-          state.categories.splice(dstIdx, 0, moved);
-
-          clearDragIndicators();
-          dragSrcId = null;
-          dragOverId = null;
-          dragOverPos = null;
-
-          renderSidebar();
-          persist();
-        });
 
         categoryList.appendChild(li);
       })(state.categories[ci]);
     }
+  }
+
+  function buildCategoryActionButton(action, glyph, title, ariaLabel) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cat-action-btn";
+    btn.dataset.action = action;
+    btn.textContent = glyph;
+    btn.title = title;
+    btn.setAttribute("aria-label", ariaLabel);
+    btn.draggable = false;
+    return btn;
+  }
+
+  /* =========================================================
+   *  分类栏事件委托
+   *  —— 所有交互只在 #category-list 上绑定一次，
+   *     登录后云端数据无论重绘多少次都无需重新绑定。
+   * ========================================================= */
+
+  function findCategoryItem(target) {
+    if (!target || !target.closest) return null;
+    return target.closest(".category-item");
+  }
+
+  function handleCategoryListClick(event) {
+    /* 1) 浮动操作栏：设置 / 下载 */
+    var actionBtn = event.target.closest
+      ? event.target.closest(".cat-action-btn")
+      : null;
+
+    if (actionBtn) {
+      var actionItem = findCategoryItem(actionBtn);
+      if (!actionItem || !actionItem.dataset.catId) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      var catId = actionItem.dataset.catId;
+      var action = actionBtn.dataset.action;
+
+      if (action === "settings") {
+        openCategoryModal(catId);
+      } else if (action === "download") {
+        var cat = getCategoryById(catId);
+        if (cat) exportCategory(cat);
+      }
+      return;
+    }
+
+    /* 点击操作栏背景 / 间隙时不做任何事，避免误触切换分类 */
+    if (event.target.closest && event.target.closest(".cat-actions")) {
+      return;
+    }
+
+    /* 2) 点击整行：切换分类 */
+    var item = findCategoryItem(event.target);
+    if (!item || !item.dataset.catId) return;
+
+    switchCategory(item.dataset.catId);
+  }
+
+  function handleCategoryListDragStart(event) {
+    var item = findCategoryItem(event.target);
+    if (!item || !item.dataset.catId) return;
+
+    if (
+      event.target.closest &&
+      event.target.closest(".cat-action-btn")
+    ) {
+      event.preventDefault();
+      return;
+    }
+
+    dragSrcId = item.dataset.catId;
+    dragOverId = null;
+    dragOverPos = null;
+
+    var dragged = item;
+    window.setTimeout(function () {
+      dragged.classList.add("is-dragging");
+    }, 0);
+
+    try {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", dragSrcId);
+    } catch (_) {
+      /* 忽略 */
+    }
+  }
+
+  function handleCategoryListDragEnd() {
+    clearDragIndicators();
+    dragSrcId = null;
+    dragOverId = null;
+    dragOverPos = null;
+  }
+
+  function handleCategoryListDragOver(event) {
+    var item = findCategoryItem(event.target);
+    if (!item || !item.dataset.catId) return;
+    if (!dragSrcId || dragSrcId === item.dataset.catId) return;
+
+    event.preventDefault();
+    try {
+      event.dataTransfer.dropEffect = "move";
+    } catch (_) {
+      /* 忽略 */
+    }
+
+    var rect = item.getBoundingClientRect();
+    var isAbove = event.clientY < rect.top + rect.height / 2;
+
+    var items = categoryList.querySelectorAll(".category-item");
+    items.forEach(function (el) {
+      if (el !== item) el.classList.remove("drop-above", "drop-below");
+    });
+
+    item.classList.toggle("drop-above", isAbove);
+    item.classList.toggle("drop-below", !isAbove);
+
+    dragOverId = item.dataset.catId;
+    dragOverPos = isAbove ? "above" : "below";
+  }
+
+  function handleCategoryListDragLeave(event) {
+    var item = findCategoryItem(event.target);
+    if (!item) return;
+
+    if (!item.contains(event.relatedTarget)) {
+      item.classList.remove("drop-above", "drop-below");
+    }
+  }
+
+  function handleCategoryListDrop(event) {
+    var item = findCategoryItem(event.target);
+    if (!item || !item.dataset.catId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    var targetId = item.dataset.catId;
+
+    if (!dragSrcId || dragSrcId === targetId) {
+      clearDragIndicators();
+      return;
+    }
+
+    var srcIdx = state.categories.findIndex(function (c) {
+      return c.id === dragSrcId;
+    });
+    if (srcIdx < 0) {
+      clearDragIndicators();
+      return;
+    }
+
+    var movedArr = state.categories.splice(srcIdx, 1);
+    var moved = movedArr[0];
+
+    var dstIdx = state.categories.findIndex(function (c) {
+      return c.id === targetId;
+    });
+    if (dstIdx < 0) {
+      state.categories.splice(srcIdx, 0, moved);
+      clearDragIndicators();
+      return;
+    }
+
+    if (dragOverPos === "below") dstIdx += 1;
+
+    state.categories.splice(dstIdx, 0, moved);
+
+    clearDragIndicators();
+    dragSrcId = null;
+    dragOverId = null;
+    dragOverPos = null;
+
+    renderSidebar();
+    persist();
+  }
+
+  /* 只在启动时绑定一次；分类列表重绘不影响委托监听 */
+  function bindCategoryListEvents() {
+    categoryList.addEventListener("click", handleCategoryListClick);
+    categoryList.addEventListener("dragstart", handleCategoryListDragStart);
+    categoryList.addEventListener("dragend", handleCategoryListDragEnd);
+    categoryList.addEventListener("dragover", handleCategoryListDragOver);
+    categoryList.addEventListener("dragleave", handleCategoryListDragLeave);
+    categoryList.addEventListener("drop", handleCategoryListDrop);
   }
 
   /* =========================================================
@@ -532,14 +937,20 @@
    * ========================================================= */
 
   function switchCategory(id) {
-    if (state.activeCategoryId === id) return;
+    if (state.activeCategoryId === id) {
+      /* 再次点击当前分类：重新聚焦首个连通块 */
+      CanvasAPI.autoFocusFirstComponent();
+      return;
+    }
+
     syncActiveCategoryFromScene();
     state.activeCategoryId = id;
-    CanvasAPI.loadActiveCategory();
+    CanvasAPI.loadActiveCategory({ autoFocusFirst: true });
     renderSidebar();
     renderDrawer();
     runSearch();
-    persist();
+    /* 切换分类只是导航动作：只落本地，不触发云端上传 */
+    persist({ cloud: false });
   }
 
   function deleteCategory(cat) {
@@ -564,7 +975,7 @@
 
     if (wasActive) {
       state.activeCategoryId = state.categories[0].id;
-      CanvasAPI.loadActiveCategory();
+      CanvasAPI.loadActiveCategory({ autoFocusFirst: true });
       runSearch();
     }
 
@@ -636,6 +1047,105 @@
   }
 
   /* =========================================================
+   *  🏷️ 连通块专题重命名
+   * ========================================================= */
+
+  function openTopicRenameModal(comp) {
+    if (!comp || !topicModal) return;
+
+    hideRootPopover();
+
+    var defaultName = buildDefaultTopicTitle(comp.roots);
+    var customName = getTopicCustomName(comp);
+
+    topicRenameTarget = {
+      componentKey: comp.key,
+      topicKey: getTopicKey(comp),
+      defaultName: defaultName,
+    };
+
+    if (topicFieldLabel) {
+      topicFieldLabel.textContent =
+        "修改专题名称（当前默认：" + defaultName + "）";
+    }
+
+    if (topicFieldHint) {
+      topicFieldHint.textContent = "留空则恢复默认名称：" + defaultName;
+    }
+
+    if (topicFieldName) {
+      topicFieldName.value = customName;
+      topicFieldName.placeholder = defaultName;
+      topicFieldName.classList.remove("is-invalid");
+    }
+
+    topicModal.hidden = false;
+    document.body.classList.add("modal-open");
+
+    requestAnimationFrame(function () {
+      if (!topicFieldName) return;
+      topicFieldName.focus();
+      if (topicFieldName.select) topicFieldName.select();
+    });
+  }
+
+  function closeTopicRenameModal() {
+    if (!topicModal) return;
+
+    topicModal.hidden = true;
+    topicRenameTarget = null;
+
+    if (topicForm) topicForm.reset();
+    if (topicFieldName) {
+      topicFieldName.classList.remove("is-invalid");
+      topicFieldName.placeholder = "例如：区间贪心基础";
+    }
+
+    /* 仅当没有其他弹窗时才解除页面滚动锁 */
+    var zenModalEl = document.getElementById("zen-modal");
+    var readerModalEl = document.getElementById("reader-modal");
+    if (
+      modal.hidden &&
+      catModal.hidden &&
+      (!zenModalEl || zenModalEl.hidden) &&
+      (!readerModalEl || readerModalEl.hidden)
+    ) {
+      document.body.classList.remove("modal-open");
+    }
+  }
+
+  function saveTopicRename() {
+    if (!topicRenameTarget) return;
+
+    var cat = typeof getActiveCategory === "function" ? getActiveCategory() : null;
+    if (!cat) {
+      closeTopicRenameModal();
+      return;
+    }
+
+    var name = topicFieldName ? topicFieldName.value.trim().slice(0, 32) : "";
+
+    if (!cat.topicNames || typeof cat.topicNames !== "object") {
+      cat.topicNames = {};
+    }
+
+    if (name) {
+      cat.topicNames[topicRenameTarget.topicKey] = name;
+    } else {
+      /* 留空 = 恢复“首道根题目”默认名称 */
+      delete cat.topicNames[topicRenameTarget.topicKey];
+    }
+
+    closeTopicRenameModal();
+
+    /* 立即刷新右上角卡片标题 */
+    buildRootNav();
+
+    /* 内容型变更：走 2s 防抖后同步至 Supabase 云端 */
+    persist();
+  }
+
+  /* =========================================================
    *  右侧抽屉
    * ========================================================= */
 
@@ -655,6 +1165,86 @@
   function toggleDrawer() {
     if (drawer.classList.contains("is-open")) closeDrawer();
     else openDrawer();
+  }
+
+  /**
+   * 让右上角“根题目 / 专题列表”的激活态与当前独占连通块保持一致。
+   */
+  function syncRootNavActiveState(componentKey) {
+    rootNavActiveKey = componentKey || null;
+
+    if (!rootNavList) return;
+
+    rootNavList.querySelectorAll(".root-nav-item").forEach(function (el) {
+      var isActive =
+        !!componentKey && el.dataset.componentKey === componentKey;
+      el.classList.toggle("is-active", isActive);
+    });
+  }
+
+  function getComponentKeyFromIds(ids) {
+    if (!ids || !ids.length) return null;
+
+    return ids
+      .slice()
+      .sort(function (a, b) { return a - b; })
+      .join(",");
+  }
+
+  function findComponentByNodeId(nodeId) {
+    var components =
+      CanvasAPI && typeof CanvasAPI.getGraphComponents === "function"
+        ? CanvasAPI.getGraphComponents()
+        : [];
+
+    for (var i = 0; i < components.length; i++) {
+      if (components[i].nodeIds.indexOf(Number(nodeId)) !== -1) {
+        return components[i];
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 右侧抽屉展开时的遮挡宽度。
+   * 移动端点击题目后会立即收起抽屉，因此不让镜头为它让位。
+   */
+  function getDrawerRightInset() {
+    if (!drawer || !drawer.classList.contains("is-open")) return 0;
+    if (window.innerWidth < 720) return 0;
+
+    var rect = drawer.getBoundingClientRect();
+    return rect.width || 0;
+  }
+
+  /**
+   * 抽屉点击题目：
+   * 1) 若目标属于其他连通块，先切换独占分支，并同步右上角专题卡片激活态；
+   * 2) 选中该题，并把镜头对焦到“剩余可视区域”中心，自动避开右侧抽屉。
+   */
+  function focusNodeFromDrawer(node) {
+    if (!node) return;
+
+    var targetComp = findComponentByNodeId(node.id);
+    var filterIds = CanvasAPI.getFilterNodeIds();
+    var currentKey = getComponentKeyFromIds(filterIds);
+    var nodeVisible =
+      !filterIds || filterIds.indexOf(Number(node.id)) !== -1;
+
+    /* 跨连通块（或目标当前被隐藏）时，先切换到目标专题分支 */
+    if (targetComp && (!nodeVisible || currentKey !== targetComp.key)) {
+      CanvasAPI.setComponentFilter(targetComp.nodeIds);
+      syncRootNavActiveState(targetComp.key);
+    } else if (!targetComp && currentKey) {
+      CanvasAPI.setComponentFilter(null);
+      syncRootNavActiveState(null);
+    }
+
+    CanvasAPI.setSelectedNode(node.id);
+    CanvasAPI.panToNode(node, { rightInset: getDrawerRightInset() });
+
+    if (window.innerWidth < 720) closeDrawer();
   }
 
   function renderDrawer() {
@@ -737,11 +1327,7 @@
         li.append(titleEl, metaEl);
 
         li.addEventListener("click", function () {
-          var node = nodes.get(item.id);
-          if (!node) return;
-          CanvasAPI.setSelectedNode(node.id);
-          CanvasAPI.panToNode(node);
-          if (window.innerWidth < 720) closeDrawer();
+          focusNodeFromDrawer(nodes.get(item.id));
         });
 
         drawerList.appendChild(li);
@@ -782,6 +1368,7 @@
 
       var nodeIds = new Set(importedNodes.map(function (n) { return n.id; }));
       var importedEdges = normalizeImportedEdges(payload.edges, nodeIds);
+      var importedTopicNames = normalizeImportedTopicNames(payload.topicNames);
 
       var maxId = importedNodes.reduce(function (m, n) { return Math.max(m, n.id); }, 0);
 
@@ -810,56 +1397,58 @@
           syncActiveCategoryFromScene();
           existing.nodes = importedNodes;
           existing.edges = importedEdges;
+          existing.topicNames = importedTopicNames;
           existing.view = { x: 0, y: 0, scale: 1 };
           existing.nodeCount = maxId;
           existing.author = importedMeta.author;
           existing.luoguUrl = importedMeta.luoguUrl;
           existing.description = importedMeta.description;
+          /* 导入文件自带坐标，保留其排版，不触发 LR 自动迁移 */
+          existing.layoutVersion =
+            typeof CATEGORY_LAYOUT_VERSION === "number"
+              ? CATEGORY_LAYOUT_VERSION
+              : 4;
 
           state.activeCategoryId = existing.id;
-          CanvasAPI.loadActiveCategory();
+          CanvasAPI.loadActiveCategory({ autoFocusFirst: true });
           renderSidebar();
           renderDrawer();
           runSearch();
           persist();
-
-          if (importedNodes.length > 0) CanvasAPI.fitToView();
           return;
         }
 
         var newCat = createCategory(uniqueCategoryName(baseName), importedMeta);
         newCat.nodes = importedNodes;
         newCat.edges = importedEdges;
+        newCat.topicNames = importedTopicNames;
         newCat.nodeCount = maxId;
 
         syncActiveCategoryFromScene();
         state.categories.push(newCat);
         state.activeCategoryId = newCat.id;
-        CanvasAPI.loadActiveCategory();
+        CanvasAPI.loadActiveCategory({ autoFocusFirst: true });
         renderSidebar();
         renderDrawer();
         runSearch();
         persist();
-
-        if (importedNodes.length > 0) CanvasAPI.fitToView();
         return;
       }
 
       var newCat2 = createCategory(baseName, importedMeta);
       newCat2.nodes = importedNodes;
       newCat2.edges = importedEdges;
+      newCat2.topicNames = importedTopicNames;
       newCat2.nodeCount = maxId;
 
       syncActiveCategoryFromScene();
       state.categories.push(newCat2);
       state.activeCategoryId = newCat2.id;
-      CanvasAPI.loadActiveCategory();
+      CanvasAPI.loadActiveCategory({ autoFocusFirst: true });
       renderSidebar();
       renderDrawer();
       runSearch();
       persist();
-
-      if (importedNodes.length > 0) CanvasAPI.fitToView();
     }).catch(function (err) {
       console.error("[oitree] 导入失败：", err);
       alert("导入失败：" + (err.message || err));
@@ -870,9 +1459,56 @@
    *  事件绑定
    * ========================================================= */
 
+  /**
+   * 「整理视图」统一动作：
+   * 1) 对当前可见节点重新计算横向 DAG 坐标；
+   * 2) autoLayout 动画期间逐帧重绘连线；
+   * 3) 按整理后的包围盒平滑缩放并居中镜头；
+   * 4) persist() 回写坐标并进入云同步防抖。
+   */
+  function handleCleanView() {
+    if (!CanvasAPI || typeof CanvasAPI.autoLayout !== "function") return;
+
+    var visibleIds =
+      typeof CanvasAPI.getFilterNodeIds === "function"
+        ? CanvasAPI.getFilterNodeIds()
+        : null;
+
+    var options = {
+      center: true,
+      fit: true,
+      animate: true,
+      reserveRight: 270,
+    };
+
+    /* 专题独占浏览时只整理当前分支；全部显示时整理整图 */
+    if (visibleIds && visibleIds.length) {
+      options.nodeIds = visibleIds;
+    }
+
+    CanvasAPI.autoLayout(options);
+  }
+
   addButton.addEventListener("click", function () { EditorAPI.openProblemModal(null); });
-  layoutButton.addEventListener("click", CanvasAPI.autoLayout);
-  resetViewButton.addEventListener("click", CanvasAPI.fitToView);
+
+  if (cleanViewButton) {
+    cleanViewButton.addEventListener("click", handleCleanView);
+  }
+
+  /* 根题目导航面板事件 */
+  if (rootNavList) {
+    rootNavList.addEventListener("click", handleRootNavClick);
+    rootNavList.addEventListener("pointerover", handleRootNavPointerOver);
+    rootNavList.addEventListener("pointerout", handleRootNavPointerOut);
+    rootNavList.addEventListener("scroll", hideRootPopover);
+  }
+
+  if (rootNavReset) {
+    rootNavReset.addEventListener("click", handleRootNavReset);
+  }
+
+  window.addEventListener("oitree:graph-changed", buildRootNav);
+  window.addEventListener("resize", hideRootPopover);
 
   zoomBadge.addEventListener("click", function () {
     var rect = canvasEl.getBoundingClientRect();
@@ -886,7 +1522,8 @@
     view.x = rect.width / 2 - centerWorld.x * newScale;
     view.y = rect.height / 2 - centerWorld.y * newScale;
     CanvasAPI.applyView();
-    persist();
+    /* 仅重置视角：只落本地，不触发云同步 */
+    persist({ cloud: false });
   });
 
   sidebarToggle.addEventListener("click", function () {
@@ -919,6 +1556,25 @@
   catModal.addEventListener("mousedown", function (event) {
     if (event.target === catModal) closeCategoryModal();
   });
+
+  /* 🏷️ 专题重命名弹窗事件 */
+  if (topicModalCloseBtn) {
+    topicModalCloseBtn.addEventListener("click", closeTopicRenameModal);
+  }
+  if (topicModalCancelBtn) {
+    topicModalCancelBtn.addEventListener("click", closeTopicRenameModal);
+  }
+  if (topicModal) {
+    topicModal.addEventListener("mousedown", function (event) {
+      if (event.target === topicModal) closeTopicRenameModal();
+    });
+  }
+  if (topicForm) {
+    topicForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      saveTopicRename();
+    });
+  }
 
   catNameInput.addEventListener("input", function () {
     catNameInput.classList.remove("is-invalid");
@@ -962,7 +1618,7 @@
 
       closeCategoryModal();
 
-      CanvasAPI.loadActiveCategory();
+      CanvasAPI.loadActiveCategory({ autoFocusFirst: true });
       renderSidebar();
       renderDrawer();
       runSearch();
@@ -1000,6 +1656,7 @@
     return (
       !modal.hidden ||
       !catModal.hidden ||
+      (topicModal && !topicModal.hidden) ||
       (zenModalEl && !zenModalEl.hidden) ||
       (readerModalEl && !readerModalEl.hidden) ||
       (authModalEl && !authModalEl.hidden)
@@ -1046,6 +1703,10 @@
       }
       if (zenModalEl && !zenModalEl.hidden) {
         EditorAPI.closeZenMode(true);
+        return;
+      }
+      if (topicModal && !topicModal.hidden) {
+        closeTopicRenameModal();
         return;
       }
       if (!catModal.hidden) {
@@ -1123,13 +1784,33 @@
    *  启动
    * ========================================================= */
 
-  initAppState();
+  /* 若云同步已经先行写入 state（极快返回），则不再用本地缓存覆盖它 */
+  if (!state) initAppState();
 
   CanvasAPI.bindCanvasPanZoom();
-  CanvasAPI.loadActiveCategory();
-  renderSidebar();
-  renderDrawer();
-  CanvasAPI.applyView();
-  CanvasAPI.updateCanvasInfo();
-  persist();
+
+  /* 分类栏使用事件委托：只绑定一次，重绘后交互依然有效 */
+  bindCategoryListEvents();
+
+  /* 初始化根题目导航（登录并渲染后由 graph-changed 自动刷新） */
+  buildRootNav();
+
+  /* 对外暴露“渲染一次并等待首帧”能力：
+   * 登录 / 刷新恢复会话时由 auth.js 在云端数据就绪后调用，
+   * 确保默认骨架不会先于真实数据渲染。 */
+  window.OITreeApp = {
+    renderWorkspace: renderWorkspace,
+    renderWorkspaceAndWait: renderWorkspaceAndWait,
+    isRendered: function () {
+      return workspaceRendered;
+    },
+    resetRenderState: function () {
+      workspaceRendered = false;
+    },
+  };
+
+  /* 兜底：鉴权模块缺失（例如脚本加载失败）时仍渲染工作台，避免空白页 */
+  if (!window.OITreeAuth) {
+    renderWorkspace(true);
+  }
 })();
