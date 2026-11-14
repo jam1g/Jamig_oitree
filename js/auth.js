@@ -1,8 +1,8 @@
 /* =========================================================
  *  auth.js — Supabase 云端鉴权 + 邮箱激活链接
  *  - 登录 / 注册弹窗：暗黑磨砂玻璃，登录 / 注册 Tab 无缝切换
- *  - 注册流程：邮箱 + 密码 → signUp 发送激活邮件
- *              → 用户点击邮件中的确认链接激活 → 返回登录
+ *  - 注册流程：昵称 + 邮箱 + 密码 → signUp（昵称写入 user_metadata）
+ *              → 发送激活邮件 → 用户点击邮件中的确认链接激活 → 返回登录
  *  - 登录流程：signInWithPassword
  *  - 会话保持：onAuthStateChange 实时同步，刷新不丢失登录态
  *  - 右上角【用户】菜单：退出登录（signOut）
@@ -108,6 +108,7 @@
     dom.loginSubmit = $("auth-login-submit");
 
     /* 注册表单 */
+    dom.regNickname = $("auth-reg-nickname");
     dom.regEmail = $("auth-reg-email");
     dom.regPassword = $("auth-reg-password");
     dom.regConfirm = $("auth-reg-confirm");
@@ -195,6 +196,34 @@
    *  登录态 UI
    * ========================================================= */
 
+  /**
+   * 统一用户显示名：昵称优先，其次兼容旧 metadata，最后降级为邮箱前缀。
+   * 侧边栏、顶部用户区与头像首字母都复用该结果。
+   */
+  function getDisplayName(user) {
+    if (!user) return "已登录用户";
+
+    var meta = user.user_metadata || {};
+    var email = String(user.email || "").trim();
+    var emailPrefix = email ? email.split("@")[0] : "";
+    var candidates = [
+      meta.nickname,
+      meta.username,
+      meta.display_name,
+      meta.full_name,
+      emailPrefix,
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+      var value = candidates[i];
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+    }
+
+    return "已登录用户";
+  }
+
   function updateAuthUI(user) {
     var loggedIn = !!(user && user.id);
     ui.loggedIn = loggedIn;
@@ -208,16 +237,12 @@
     setHidden(dom.userProfile, !loggedIn);
 
     if (loggedIn) {
-      var meta = user.user_metadata || {};
-      var name =
-        meta.username ||
-        meta.display_name ||
-        meta.full_name ||
-        user.email ||
-        "已登录用户";
+      var name = getDisplayName(user);
 
       if (dom.userName) dom.userName.textContent = name;
-      if (dom.userAvatar) dom.userAvatar.textContent = buildAvatarText(name);
+      if (dom.userAvatar) {
+        renderUserAvatar(dom.userAvatar, getAvatarUrl(user), name);
+      }
       if (dom.userBtn) {
         dom.userBtn.title = "返回个人中心";
         dom.userBtn.setAttribute(
@@ -227,7 +252,10 @@
       }
     } else {
       if (dom.userName) dom.userName.textContent = "用户";
-      if (dom.userAvatar) dom.userAvatar.textContent = "👤";
+      if (dom.userAvatar) {
+        dom.userAvatar.classList.remove("has-avatar-image");
+        dom.userAvatar.textContent = "👤";
+      }
       if (dom.userBtn) {
         dom.userBtn.removeAttribute("title");
         dom.userBtn.setAttribute("aria-label", "用户菜单");
@@ -242,6 +270,70 @@
     var clean = String(name || "").trim();
     if (!clean) return "👤";
     return clean.charAt(0).toUpperCase();
+  }
+
+  /* 头像 URL 校验：仅允许 https(s) 与图片 DataURL（压缩头像直接存 metadata） */
+  function normalizeAvatarUrl(raw) {
+    if (typeof raw !== "string") return "";
+    var url = raw.trim();
+    if (!url) return "";
+
+    if (/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return url;
+    if (/^https?:\/\//i.test(url)) return url;
+
+    return "";
+  }
+
+  /**
+   * 读取用户头像 URL（user_metadata.avatar_url）。
+   * 无头像 / 非法地址统一返回空字符串，由调用方回退首字母徽章。
+   */
+  function getAvatarUrl(user) {
+    if (!user) return "";
+    var meta = user.user_metadata || {};
+    return normalizeAvatarUrl(meta.avatar_url);
+  }
+
+  /**
+   * 通用头像渲染：
+   * - 有有效图片：渲染圆形裁剪的 <img>，不拉伸
+   * - 无图片 / 图片加载失败：回退为昵称首字母徽章
+   *
+   * @param {HTMLElement} el 头像容器（可包含 .avatar-visual 子层）
+   * @param {string} avatarUrl 头像地址
+   * @param {string} displayName 昵称（用于首字母回退）
+   */
+  function renderUserAvatar(el, avatarUrl, displayName) {
+    if (!el) return;
+
+    var host =
+      typeof el.querySelector === "function"
+        ? el.querySelector(".avatar-visual") || el
+        : el;
+
+    var url = normalizeAvatarUrl(avatarUrl);
+    var fallbackText = buildAvatarText(displayName);
+
+    host.classList.toggle("has-avatar-image", !!url);
+
+    if (!url) {
+      host.textContent = fallbackText;
+      return;
+    }
+
+    var img = document.createElement("img");
+    img.className = "avatar-img";
+    img.alt = displayName ? String(displayName) + " 的头像" : "用户头像";
+    img.decoding = "async";
+    img.loading = "lazy";
+
+    img.addEventListener("error", function () {
+      host.classList.remove("has-avatar-image");
+      host.textContent = fallbackText;
+    });
+
+    img.src = url;
+    host.replaceChildren(img);
   }
 
   /* 统一隐藏：同时使用 class 与 hidden 属性，避免元素自身 display 规则覆盖 */
@@ -304,8 +396,8 @@
     window.setTimeout(function () {
       if (ui.view === "activate") {
         if (dom.gotoLoginBtn) dom.gotoLoginBtn.focus();
-      } else if (ui.view === "register" && dom.regEmail) {
-        dom.regEmail.focus();
+      } else if (ui.view === "register" && dom.regNickname) {
+        dom.regNickname.focus();
       } else if (dom.loginEmail) {
         dom.loginEmail.focus();
       }
@@ -890,7 +982,7 @@
     setView(tab);
 
     window.setTimeout(function () {
-      if (tab === "register" && dom.regEmail) dom.regEmail.focus();
+      if (tab === "register" && dom.regNickname) dom.regNickname.focus();
       if (tab === "login" && dom.loginEmail) dom.loginEmail.focus();
     }, 30);
   }
@@ -990,11 +1082,24 @@
   function handleSendCode() {
     if (ui.busy) return;
 
+    var nickname = dom.regNickname ? dom.regNickname.value.trim() : "";
     var email = dom.regEmail ? dom.regEmail.value.trim() : "";
     var password = dom.regPassword ? dom.regPassword.value : "";
     var confirm = dom.regConfirm ? dom.regConfirm.value : "";
 
     clearMessage();
+
+    if (!nickname) {
+      setMessage("请输入用户昵称", "error");
+      if (dom.regNickname) dom.regNickname.focus();
+      return;
+    }
+
+    if (nickname.length < 2 || nickname.length > 20) {
+      setMessage("用户昵称长度需为 2 ~ 20 个字符", "error");
+      if (dom.regNickname) dom.regNickname.focus();
+      return;
+    }
 
     if (!isValidEmail(email)) {
       setMessage("请输入有效的邮箱地址", "error");
@@ -1023,7 +1128,15 @@
     dom.sendCodeBtn.textContent = "发送中...";
 
     supabase.auth
-      .signUp({ email: email, password: password })
+      .signUp({
+        email: email,
+        password: password,
+        options: {
+          data: {
+            nickname: nickname,
+          },
+        },
+      })
       .then(function (result) {
         if (result.error) {
           setMessage(mapAuthError(result.error), "error");
@@ -1342,6 +1455,11 @@
     getClient: function () { return supabase; },
     getUser: function () { return currentUser; },
     isLoggedIn: function () { return !!currentUser; },
+    getDisplayName: getDisplayName,
+    getAvatarUrl: getAvatarUrl,
+    renderUserAvatar: renderUserAvatar,
+    /* 使用最新 user 刷新全站鉴权 UI（资料保存后无需刷新页面） */
+    applyUser: updateAuthUI,
     signOut: handleLogout,
     closeMenus: closeUserMenu,
     onChange: function (handler) {

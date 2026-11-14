@@ -26,26 +26,47 @@ var LEGACY_KEYS = ["oitree.state.v3", "oitree.state.v2"];
 var CATEGORY_LAYOUT_VERSION = 5;
 
 /* =========================================================
- *  🎨 洛谷官方 9 级难度字典
+ *  🎨 洛谷官方 9 级难度字典（全站唯一定义源）
  *  - value      : 数据存储键（稳定，不改动以兼容旧数据）
  *  - label      : 显示名称（与洛谷官方 1:1 对齐）
- *  - accent     : 节点左侧色条 / 强调色
- *  - border     : 节点边框色 / 下拉框文字色（保证深色主题可读）
+ *  - accent     : 节点左侧色条 / 图表柱体 / 强调色
+ *  - border     : 节点边框色 / 连接锚点色
+ *  - text       : 下拉框选项 / 列表标题等文字色（深色主题可读）
+ *
+ *  ⚠️ 所有组件（顶部筛选器、编辑弹窗、阅读视图、题目抽屉、
+ *     题单管理、首页图表）都必须通过本表或 getDifficultyTextColor()
+ *     取色，禁止各自硬编码难度颜色。
  * ========================================================= */
 
+/* 无难度 / 未知值时的默认文字色（与 base.css 的全局文字色一致） */
+var DIFFICULTY_DEFAULT_TEXT_COLOR = "#e8eef7";
+
 var DIFFICULTIES = [
-  { value: "none",        label: "暂无评定",       accent: "#bfbfbf", border: "#bfbfbf" },
-  { value: "beginner",    label: "入门",           accent: "#fe4c61", border: "#fe4c61" },
-  { value: "easy",        label: "普及-",          accent: "#f39c11", border: "#f39c11" },
-  { value: "basic",       label: "普及",           accent: "#ffc116", border: "#ffc116" },
-  { value: "easy-medium", label: "普及+/提高-",    accent: "#52c41a", border: "#52c41a" },
-  { value: "medium",      label: "提高",           accent: "#2578b5", border: "#2578b5" },
-  { value: "hard",        label: "提高+/省选-",    accent: "#0e90d2", border: "#0e90d2" },
-  { value: "harder",      label: "省选/NOI-",      accent: "#9d3dcf", border: "#9d3dcf" },
-  { value: "noi",         label: "NOI/NOI+/CTS",   accent: "#0e1d24", border: "#64748b" },
+  { value: "none",        label: "暂无评定",       accent: "#bfbfbf", border: "#bfbfbf", text: "#bfbfbf" },
+  { value: "beginner",    label: "入门",           accent: "#fe4c61", border: "#fe4c61", text: "#fe4c61" },
+  { value: "easy",        label: "普及-",          accent: "#f39c11", border: "#f39c11", text: "#f39c11" },
+  { value: "basic",       label: "普及",           accent: "#ffc116", border: "#ffc116", text: "#ffc116" },
+  { value: "easy-medium", label: "普及+/提高-",    accent: "#52c41a", border: "#52c41a", text: "#52c41a" },
+  { value: "medium",      label: "提高",           accent: "#2578b5", border: "#2578b5", text: "#2578b5" },
+  { value: "hard",        label: "提高+/省选-",    accent: "#0e90d2", border: "#0e90d2", text: "#0e90d2" },
+  { value: "harder",      label: "省选/NOI-",      accent: "#9d3dcf", border: "#9d3dcf", text: "#9d3dcf" },
+  /* 🖤 黑题：卡片左侧条 / 图表柱体保留官方深炭曜石 #33333a；
+   * 边框、锚点与文字统一用冷灰钢蓝 #94a3b8，避免深色背景下近白过亮突兀 */
+  { value: "noi",         label: "NOI/NOI+/CTS",   accent: "#33333a", border: "#94a3b8", text: "#94a3b8" },
 ];
 
 var difficultyMap = new Map(DIFFICULTIES.map(function (d) { return [d.value, d]; }));
+
+/**
+ * 统一难度文字色：下拉框选项、已选值、列表标题、阅读视图徽章等。
+ * @param {string} value 难度存储键
+ * @returns {string} CSS 颜色值
+ */
+function getDifficultyTextColor(value) {
+  var info = difficultyMap.get(value);
+  if (!info) return DIFFICULTY_DEFAULT_TEXT_COLOR;
+  return info.text || info.border || DIFFICULTY_DEFAULT_TEXT_COLOR;
+}
 
 /* =========================================================
  *  🏷️ 刷题状态
@@ -63,6 +84,138 @@ var STATUSES = [
 ];
 
 var statusMap = new Map(STATUSES.map(function (s) { return [s.value, s]; }));
+
+/* =========================================================
+ *  ⚙️ 用户偏好（技能树与画布）
+ *  - 本地即时缓存：localStorage['oitree_user_prefs']
+ *  - 多端一致：随 state.preferences 一并同步至 Supabase（user_oitree_data）
+ * ========================================================= */
+
+var PREF_STORAGE_KEY = "oitree_user_prefs";
+
+/* 可选值白名单：与偏好面板下拉选项保持一致 */
+var CODE_LANGUAGE_OPTIONS = ["cpp", "python", "java"];
+
+var CODE_FONT_OPTIONS = [
+  "'JetBrains Mono', monospace",
+  "'Fira Code', monospace",
+  "'Consolas', monospace",
+  "monospace",
+];
+
+var defaultPreferences = {
+  /* 切换专题时自动规整排版并居中镜头 */
+  autoLayoutOnSwitch: true,
+  /* 连线样式：'bezier'（平滑贝塞尔） | 'orthogonal'（正交直角折线） */
+  edgeStyle: "bezier",
+  /* 题解代码块默认高亮语言 */
+  defaultCodeLanguage: "cpp",
+  /* 代码等宽字体（CSS font-family 值） */
+  codeFont: "'JetBrains Mono', monospace",
+};
+
+var userPreferences = clonePreferences(defaultPreferences);
+
+function clonePreferences(src) {
+  var source = src && typeof src === "object" ? src : defaultPreferences;
+  return {
+    autoLayoutOnSwitch:
+      typeof source.autoLayoutOnSwitch === "boolean"
+        ? source.autoLayoutOnSwitch
+        : defaultPreferences.autoLayoutOnSwitch,
+    edgeStyle:
+      source.edgeStyle === "orthogonal" ? "orthogonal" : "bezier",
+    defaultCodeLanguage:
+      CODE_LANGUAGE_OPTIONS.indexOf(source.defaultCodeLanguage) !== -1
+        ? source.defaultCodeLanguage
+        : defaultPreferences.defaultCodeLanguage,
+    codeFont:
+      CODE_FONT_OPTIONS.indexOf(source.codeFont) !== -1
+        ? source.codeFont
+        : defaultPreferences.codeFont,
+  };
+}
+
+/** 归一化任意来源（云端 / 本地 / 默认）的偏好对象 */
+function normalizePreferences(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return clonePreferences(defaultPreferences);
+  }
+  return clonePreferences(raw);
+}
+
+function writePreferencesToStorage() {
+  try {
+    localStorage.setItem(PREF_STORAGE_KEY, JSON.stringify(userPreferences));
+  } catch (err) {
+    console.warn("[oitree] 保存偏好设置失败：", err);
+  }
+}
+
+function readPreferencesFromStorage() {
+  try {
+    var raw = localStorage.getItem(PREF_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn("[oitree] 读取偏好设置失败：", err);
+    return null;
+  }
+}
+
+/**
+ * 载入偏好：优先使用传入来源（云端 state.preferences），
+ * 其次本地缓存，最后回落到默认值。
+ * 结果同时写回 localStorage 与 state.preferences，保证两端一致。
+ */
+function loadUserPreferences(source) {
+  var fallback =
+    source && typeof source === "object" ? source : readPreferencesFromStorage();
+
+  userPreferences = normalizePreferences(fallback);
+  writePreferencesToStorage();
+
+  if (state) state.preferences = clonePreferences(userPreferences);
+  return userPreferences;
+}
+
+/**
+ * 批量保存偏好（偏好面板统一入口）：
+ * 合并补丁 → 白名单归一化 → 即时落 localStorage → 写入 state.preferences → 防抖上云。
+ */
+function savePreferences(patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return userPreferences;
+  }
+
+  var next = clonePreferences(userPreferences);
+  var changed = false;
+
+  Object.keys(patch).forEach(function (key) {
+    if (!Object.prototype.hasOwnProperty.call(defaultPreferences, key)) return;
+    next[key] = patch[key];
+    changed = true;
+  });
+
+  if (!changed) return userPreferences;
+
+  userPreferences = normalizePreferences(next);
+  writePreferencesToStorage();
+
+  if (state) {
+    state.preferences = clonePreferences(userPreferences);
+    persist();
+  }
+
+  return userPreferences;
+}
+
+/** 修改单项偏好：本地即时落盘 + 触发一次云端同步 */
+function setPreference(key, value) {
+  var patch = {};
+  patch[key] = value;
+  return savePreferences(patch);
+}
 
 /* 默认状态 */
 var DEFAULT_STATUS = "ac";
@@ -395,6 +548,9 @@ function ensureStateValid() {
       }
     }
   }
+
+  /* ⚙️ 兼容旧数据：补齐 / 归一化用户偏好（云端优先，其次本地缓存） */
+  loadUserPreferences(state.preferences);
 }
 
 function getActiveCategory() {

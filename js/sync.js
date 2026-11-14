@@ -36,6 +36,10 @@
   var statusEl = null;
   var statusIconEl = null;
   var statusTextEl = null;
+  var listStatusEl = null;
+  var listStatusIconEl = null;
+  var listStatusTextEl = null;
+  var statusTargets = [];
 
   function $(id) {
     return document.getElementById(id);
@@ -50,11 +54,22 @@
     statusIconEl = $("sync-status-icon");
     statusTextEl = $("sync-status-text");
 
-    if (statusEl) {
-      statusEl.addEventListener("click", function () {
+    listStatusEl = $("list-sync-status");
+    listStatusIconEl = $("list-sync-status-icon");
+    listStatusTextEl = $("list-sync-status-text");
+
+    statusTargets = [
+      { root: statusEl, icon: statusIconEl, text: statusTextEl },
+      { root: listStatusEl, icon: listStatusIconEl, text: listStatusTextEl },
+    ].filter(function (target) {
+      return !!target.root;
+    });
+
+    statusTargets.forEach(function (target) {
+      target.root.addEventListener("click", function () {
         if (syncError) retry();
       });
-    }
+    });
 
     /* state.js 每次本地保存成功后会派发此事件 */
     window.addEventListener("oitree:persist", handleLocalPersist);
@@ -473,23 +488,41 @@
    *  顶部状态：固定 36px 图标胶囊 + 仅 hover 展示浮窗
    * ========================================================= */
 
+  function collectStatusTargets() {
+    if (statusTargets.length) return statusTargets;
+
+    statusEl = statusEl || $("sync-status");
+    statusIconEl = statusIconEl || $("sync-status-icon");
+    statusTextEl = statusTextEl || $("sync-status-text");
+
+    listStatusEl = listStatusEl || $("list-sync-status");
+    listStatusIconEl = listStatusIconEl || $("list-sync-status-icon");
+    listStatusTextEl = listStatusTextEl || $("list-sync-status-text");
+
+    statusTargets = [
+      { root: statusEl, icon: statusIconEl, text: statusTextEl },
+      { root: listStatusEl, icon: listStatusIconEl, text: listStatusTextEl },
+    ].filter(function (target) {
+      return !!target.root;
+    });
+
+    return statusTargets;
+  }
+
   function setStatus(mode, errorText) {
-    if (!statusEl) statusEl = $("sync-status");
-    if (!statusIconEl) statusIconEl = $("sync-status-icon");
-    if (!statusTextEl) statusTextEl = $("sync-status-text");
-    if (!statusEl) return;
+    var targets = collectStatusTargets();
+    if (!targets.length) return;
 
     if (!mode) {
-      statusEl.hidden = true;
-      statusEl.className = "sync-status";
-      statusEl.removeAttribute("data-tooltip");
-      statusEl.setAttribute("aria-label", "云端同步状态");
-      if (statusTextEl) statusTextEl.textContent = "";
+      targets.forEach(function (target) {
+        target.root.hidden = true;
+        target.root.className = "sync-status";
+        target.root.removeAttribute("data-tooltip");
+        target.root.setAttribute("aria-label", "云端同步状态");
+        if (target.text) target.text.textContent = "";
+      });
       return;
     }
-
-    statusEl.hidden = false;
-    statusEl.className = "sync-status is-" + mode;
 
     var icon = "☁️";
     var tooltip = "";
@@ -506,12 +539,14 @@
       tooltip = "已与 Supabase 云端同步 · " + formatRelativeTime(lastSyncedAt);
     }
 
-    if (statusIconEl) statusIconEl.textContent = icon;
-
-    statusEl.setAttribute("data-tooltip", tooltip);
-    statusEl.setAttribute("aria-label", tooltip);
-
-    if (statusTextEl) statusTextEl.textContent = tooltip;
+    targets.forEach(function (target) {
+      target.root.hidden = false;
+      target.root.className = "sync-status is-" + mode;
+      if (target.icon) target.icon.textContent = icon;
+      target.root.setAttribute("data-tooltip", tooltip);
+      target.root.setAttribute("aria-label", tooltip);
+      if (target.text) target.text.textContent = tooltip;
+    });
   }
 
   function formatRelativeTime(date) {

@@ -13,6 +13,14 @@
   <link rel="stylesheet" href="./css/root-nav.css" />
   <link rel="stylesheet" href="./css/dashboard.css" />
 
+  <!-- 程序员等宽字体（本地未安装时由 CDN 兜底） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=JetBrains+Mono:wght@400;600;700&display=swap"
+    rel="stylesheet"
+  />
+
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css" />
 
@@ -51,7 +59,10 @@
           <button type="button" class="dashboard-nav-btn" data-panel="account">账号设置</button>
         </nav>
 
-        <button type="button" class="dashboard-logout" id="dashboard-logout">退出登录</button>
+        <button type="button" class="btn-start-record dashboard-start-btn" id="btn-start-record">
+          <span>开始记录</span>
+          <span aria-hidden="true">➔</span>
+        </button>
       </aside>
 
       <section class="dashboard-content">
@@ -91,26 +102,210 @@
               </div>
             </div>
 
-            <!-- 右下角：开始记录 -->
-            <div class="home-footer-actions">
-              <button type="button" class="btn-start-record" id="btn-start-record">
-                <span>开始记录</span>
-                <span aria-hidden="true">➔</span>
-              </button>
-            </div>
           </div>
         </div>
-        <div class="dashboard-panel" id="panel-lists" data-panel="lists">
-          <h2>题单管理</h2>
-          <div class="dashboard-placeholder">题单管理功能即将上线</div>
+        <div class="dashboard-panel panel-list-management" id="panel-lists" data-panel="lists">
+          <div class="list-panel-head">
+            <h2>题单管理</h2>
+          </div>
+
+          <!-- 顶部批量操作工具栏 -->
+          <div class="batch-toolbar" id="list-batch-toolbar">
+            <div class="toolbar-left">
+              <input type="checkbox" id="select-all-lists" class="custom-checkbox" />
+              <label for="select-all-lists" class="batch-select-label">全选</label>
+              <span class="selected-badge is-empty" id="selected-info" aria-live="polite">
+                已选 <span id="selected-count">0</span> 项
+              </span>
+              <button
+                type="button"
+                class="sync-status"
+                id="list-sync-status"
+                hidden
+                aria-label="云端同步状态"
+                data-tooltip="已与 Supabase 云端同步 · 刚刚"
+              >
+                <span class="sync-icon" id="list-sync-status-icon" aria-hidden="true">☁️</span>
+                <span class="sync-dot" aria-hidden="true"></span>
+              </button>
+              <span class="sr-only" id="list-sync-status-text" role="status" aria-live="polite"></span>
+            </div>
+            <div class="toolbar-right">
+              <button type="button" id="btn-batch-download" class="btn-tool" disabled>批量下载</button>
+              <button type="button" id="btn-batch-delete" class="btn-tool btn-tool-danger" disabled>批量删除</button>
+              <button type="button" id="btn-create-list" class="btn-tool btn-tool-primary">＋ 新建题单</button>
+              <button type="button" id="btn-import-list" class="btn-tool">导入题单</button>
+              <input type="file" id="list-import-input" accept=".oitree,.json" class="hidden" />
+            </div>
+          </div>
+
+          <!-- 题单卡片列表（JS 动态渲染） -->
+          <div class="lists-cards-container" id="manage-lists-container"></div>
         </div>
         <div class="dashboard-panel" id="panel-prefs" data-panel="prefs">
           <h2>偏好设置</h2>
-          <div class="dashboard-placeholder">偏好设置功能即将上线</div>
+
+          <div class="panel-preferences">
+            <div class="pref-section-title">技能树与画布偏好</div>
+
+            <!-- 设置项 1：切换专题自动整理居中 -->
+            <div class="pref-row">
+              <div class="pref-info">
+                <div class="pref-name">切换专题自动规整居中</div>
+                <div class="pref-desc">在右上角点击切换专题时，自动重新计算最优排版并居中镜头</div>
+              </div>
+              <div class="pref-control">
+                <label class="cyber-switch">
+                  <input
+                    type="checkbox"
+                    id="pref-auto-layout"
+                    aria-label="切换专题自动规整居中"
+                    checked
+                  />
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 设置项 2：连线样式切换 -->
+            <div class="pref-row">
+              <div class="pref-info">
+                <div class="pref-name">技能树连线样式</div>
+                <div class="pref-desc">控制题目之间的连线渲染轨迹与视觉形态</div>
+              </div>
+              <div class="pref-control">
+                <select
+                  id="pref-edge-style"
+                  class="pref-select"
+                  aria-label="技能树连线样式"
+                >
+                  <option value="bezier">平滑贝塞尔曲线 (S型)</option>
+                  <option value="orthogonal">正交直角折线 (90°)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 第二组：代码与题解偏好 -->
+            <div class="pref-section-title">代码与题解偏好</div>
+
+            <div class="pref-row">
+              <div class="pref-info">
+                <div class="pref-name">默认代码高亮语言</div>
+                <div class="pref-desc">在 Markdown 题解中插入代码块时默认使用的高亮语法</div>
+              </div>
+              <div class="pref-control">
+                <select
+                  id="pref-code-lang"
+                  class="pref-select"
+                  aria-label="默认代码高亮语言"
+                >
+                  <option value="cpp">C++20</option>
+                  <option value="python">Python 3</option>
+                  <option value="java">Java</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="pref-row">
+              <div class="pref-info">
+                <div class="pref-name">代码等宽字体</div>
+                <div class="pref-desc">控制题解查看与编辑时代码块的字体与连字特性</div>
+              </div>
+              <div class="pref-control">
+                <select
+                  id="pref-code-font"
+                  class="pref-select"
+                  aria-label="代码等宽字体"
+                >
+                  <option value="'JetBrains Mono', monospace">JetBrains Mono (推荐)</option>
+                  <option value="'Fira Code', monospace">Fira Code (支持连字)</option>
+                  <option value="'Consolas', monospace">Consolas (经典 Windows)</option>
+                  <option value="monospace">系统默认等宽</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="dashboard-panel" id="panel-account" data-panel="account">
-          <h2>账号设置</h2>
-          <div class="dashboard-placeholder">账号设置功能即将上线</div>
+          <div class="account-panel-head">
+            <h2>账号设置</h2>
+          </div>
+
+          <div class="panel-account">
+            <div class="account-grid">
+              <div class="account-card">
+                <div class="pref-section-title">个人资料</div>
+
+                <div class="account-avatar-row">
+                  <button
+                    type="button"
+                    class="account-avatar"
+                    id="account-avatar"
+                    title="点击更换头像"
+                    aria-label="点击更换头像"
+                  >
+                    <span class="account-avatar-visual avatar-visual" id="account-avatar-visual">L</span>
+                    <span class="account-avatar-overlay" aria-hidden="true">
+                      <span class="account-avatar-hint">点击更换头像</span>
+                    </span>
+                  </button>
+                  <input
+                    type="file"
+                    id="avatarInput"
+                    accept="image/png, image/jpeg, image/webp"
+                    class="hidden"
+                  />
+                  <div class="account-avatar-meta">
+                    <div class="account-avatar-title">个人头像</div>
+                    <p class="account-avatar-desc">支持 PNG / JPG / WebP</p>
+                  </div>
+                </div>
+
+                <div class="account-field">
+                  <label class="account-field-label" for="account-nickname">用户昵称</label>
+                  <input
+                    class="account-input"
+                    id="account-nickname"
+                    type="text"
+                    minlength="2"
+                    maxlength="20"
+                    autocomplete="nickname"
+                    placeholder="输入您的个性昵称 (2~20 个字符)"
+                  />
+                </div>
+
+                <div class="account-field">
+                  <div class="account-field-label">登录邮箱</div>
+                  <div class="account-email-static">
+                    <span class="account-email-static-icon" aria-hidden="true">🔒</span>
+                    <span id="account-email">—</span>
+                  </div>
+                </div>
+
+                <div class="account-actions">
+                  <button type="button" class="btn btn-primary account-save-btn" id="account-save-btn">
+                    保存修改
+                  </button>
+                </div>
+
+                <p class="account-msg" id="account-msg" role="status" aria-live="polite" hidden></p>
+              </div>
+
+              <div class="account-card account-action-card">
+                <div class="pref-section-title">账号操作</div>
+                <p class="account-action-desc">
+                  当前账号已安全登录。若需切换账号或退出当前会话，可在此操作。
+                </p>
+                <button
+                  type="button"
+                  class="dashboard-logout account-logout-btn"
+                  id="account-logout-btn"
+                >
+                  退出登录
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -332,6 +527,7 @@
           <div class="field-note-header">
             <span class="field-label">复盘批注 / 解题思路</span>
             <div class="field-note-actions">
+              <button type="button" class="expand-note-btn" id="note-insert-code-btn" title="插入代码块 (Ctrl+Alt+C)">插入代码</button>
               <button type="button" class="expand-note-btn" id="note-expand-btn" title="展开大窗口编辑">⛶ 大窗口</button>
               <div class="note-tabs" role="tablist" aria-label="编辑 / 预览切换">
                 <button type="button" class="note-tab is-active" id="note-tab-edit" data-tab="edit" role="tab" aria-selected="true">✏️ 编辑</button>
@@ -379,6 +575,7 @@
           <div class="field-note-header">
             <span class="field-label">大目录简介</span>
             <div class="field-note-actions">
+              <button type="button" class="expand-note-btn" id="cat-desc-insert-code-btn" title="插入代码块 (Ctrl+Alt+C)">插入代码</button>
               <button type="button" class="expand-note-btn" id="cat-desc-expand-btn" title="展开大窗口编辑">⛶ 大窗口</button>
               <div class="note-tabs" role="tablist" aria-label="编辑 / 预览切换">
                 <button type="button" class="note-tab is-active" id="cat-desc-tab-edit" role="tab" aria-selected="true">✏️ 编辑</button>
@@ -433,7 +630,10 @@
           <h2 class="zen-title" id="zen-title">沉浸式编辑</h2>
           <span class="zen-subtitle" id="zen-subtitle">支持 Markdown、LaTeX 公式与代码高亮</span>
         </div>
-        <button type="button" class="modal-close" id="zen-close" aria-label="关闭">×</button>
+        <div class="zen-header-actions">
+          <button type="button" class="expand-note-btn" id="zen-insert-code-btn" title="插入代码块 (Ctrl+Alt+C)">插入代码</button>
+          <button type="button" class="modal-close" id="zen-close" aria-label="关闭">×</button>
+        </div>
       </header>
       <div class="zen-body">
         <div class="zen-pane zen-pane-edit">
@@ -476,6 +676,55 @@
     </div>
   </div>
 
+  <!-- ========== 题单管理：新建 / 重命名弹窗 ========== -->
+  <div class="modal-backdrop" id="list-name-modal" hidden>
+    <form class="modal modal-list-name" id="list-name-form" novalidate>
+      <header class="modal-header">
+        <div class="modal-header-left">
+          <h2 id="list-name-title">新建题单</h2>
+        </div>
+        <button type="button" class="modal-close" id="list-name-close" aria-label="关闭">×</button>
+      </header>
+      <div class="modal-body">
+        <label class="field">
+          <span class="field-label">题单名称</span>
+          <input id="list-name-input" type="text" maxlength="24" autocomplete="off" placeholder="例如：贪心" />
+        </label>
+        <p class="list-name-hint" id="list-name-hint">题单名称会同步显示在左侧题库分类栏，并保存到云端。</p>
+        <p class="list-name-error" id="list-name-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer">
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" id="list-name-cancel">取消</button>
+          <button type="submit" class="btn btn-primary" id="list-name-submit">创建</button>
+        </div>
+      </footer>
+    </form>
+  </div>
+
+  <!-- ========== 题单管理：删除二次确认弹窗 ========== -->
+  <div class="modal-backdrop" id="list-confirm-modal" hidden>
+    <div class="modal modal-list-confirm" role="dialog" aria-modal="true" aria-labelledby="list-confirm-title">
+      <header class="modal-header">
+        <div class="modal-header-left">
+          <h2 id="list-confirm-title">确认删除题单</h2>
+        </div>
+        <button type="button" class="modal-close" id="list-confirm-close" aria-label="关闭">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="list-confirm-text" id="list-confirm-text"></p>
+        <ul class="list-confirm-items" id="list-confirm-items"></ul>
+        <p class="list-confirm-error" id="list-confirm-error" role="alert" hidden></p>
+      </div>
+      <footer class="modal-footer">
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" id="list-confirm-cancel">取消</button>
+          <button type="button" class="btn btn-danger" id="list-confirm-ok">确认删除</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
   <!-- ========== 登录 / 注册弹窗（Supabase 云端鉴权） ========== -->
   <div class="modal-backdrop auth-backdrop" id="auth-modal" hidden>
     <form class="modal auth-modal" id="auth-form" novalidate>
@@ -505,7 +754,7 @@
           </div>
           <div class="field">
             <span class="field-label">密码</span>
-            <input id="auth-login-password" name="password" type="password" autocomplete="current-password" placeholder="输入密码（至少 6 位）" />
+            <input id="auth-login-password" name="password" type="password" autocomplete="current-password" placeholder="输入密码" />
           </div>
           <div class="auth-footer">
             <button type="button" class="btn btn-ghost" id="auth-switch-to-register">没有账号？去注册</button>
@@ -513,8 +762,12 @@
           </div>
         </div>
 
-        <!-- 注册面板（邮箱 + 密码） -->
+        <!-- 注册面板（昵称 + 邮箱 + 密码） -->
         <div class="auth-panel" id="auth-register-panel" hidden>
+          <div class="field">
+            <span class="field-label">用户昵称</span>
+            <input id="auth-reg-nickname" name="nickname" type="text" autocomplete="nickname" minlength="2" maxlength="20" placeholder="输入您的昵称" />
+          </div>
           <div class="field">
             <span class="field-label">邮箱地址</span>
             <input id="auth-reg-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="输入您的邮箱" />
@@ -569,5 +822,8 @@
   <script defer src="./js/sync.js"></script>
   <script defer src="./js/app.js"></script>
   <script defer src="./js/dashboard.js"></script>
+  <script defer src="./js/list-manage.js"></script>
+  <script defer src="./js/preferences.js"></script>
+  <script defer src="./js/account.js"></script>
 </body>
 </html>

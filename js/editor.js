@@ -125,6 +125,15 @@ window.OITreeEditor = (function () {
     attachTabIndent(noteInput);
     attachTabIndent(catDescInput);
 
+    /* ⌨️ 插入代码块：Ctrl/Cmd + Alt + C 或编辑器头部的「插入代码」按钮 */
+    attachCodeBlockShortcut(zenInput);
+    attachCodeBlockShortcut(noteInput);
+    attachCodeBlockShortcut(catDescInput);
+
+    bindInsertCodeButton("note-insert-code-btn", function () { return noteInput; });
+    bindInsertCodeButton("cat-desc-insert-code-btn", function () { return catDescInput; });
+    bindInsertCodeButton("zen-insert-code-btn", function () { return zenInput; });
+
     /* 🎨 难度下拉框：change 时同步自身颜色 */
     if (difficultySelect && !difficultySelect.__oitreeColorBound) {
       difficultySelect.__oitreeColorBound = true;
@@ -211,9 +220,10 @@ window.OITreeEditor = (function () {
       return;
     }
 
-    /* 使用 border 色（对深色主题可读性最优，如 NOI 的 #64748b） */
-    difficultySelect.style.color = info.border;
-    difficultySelect.style.borderColor = hexToRgba(info.border, 0.55);
+    /* 🎨 统一取色：黑题为冷灰钢蓝 #94a3b8，与顶部筛选器完全一致 */
+    var textColor = getDifficultyTextColor(value);
+    difficultySelect.style.color = textColor;
+    difficultySelect.style.borderColor = hexToRgba(textColor, 0.55);
   }
 
   /* =========================================================
@@ -266,6 +276,96 @@ window.OITreeEditor = (function () {
 
       this.selectionStart = this.selectionEnd = start + TAB_SPACES.length;
       this.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  /* =========================================================
+   *  ⌨️ 插入代码块（跟随偏好设置中的默认高亮语言）
+   * ========================================================= */
+
+  var CODE_BLOCK_PLACEHOLDER = "// 在此编写算法题解代码";
+
+  var CODE_BLOCK_COMMENT = {
+    cpp: "// 在此编写算法题解代码",
+    python: "# 在此编写算法题解代码",
+    java: "// 在此编写算法题解代码",
+  };
+
+  function getPreferredCodeLanguage() {
+    var prefs = window.userPreferences;
+    var lang = prefs && prefs.defaultCodeLanguage;
+    return CODE_BLOCK_COMMENT[lang] ? lang : "cpp";
+  }
+
+  /**
+   * 在当前光标处插入 Markdown 围栏代码块。
+   * 语言取自「偏好设置 → 默认代码高亮语言」，光标落在注释行末尾。
+   */
+  function insertCodeBlock(textarea) {
+    if (!textarea) return;
+
+    var lang = getPreferredCodeLanguage();
+    var comment = CODE_BLOCK_COMMENT[lang] || CODE_BLOCK_PLACEHOLDER;
+    var fence = "```" + lang + "\n" + comment + "\n```\n";
+
+    var value = typeof textarea.value === "string" ? textarea.value : "";
+    var start =
+      typeof textarea.selectionStart === "number"
+        ? textarea.selectionStart
+        : value.length;
+    var end =
+      typeof textarea.selectionEnd === "number" ? textarea.selectionEnd : start;
+
+    var before = value.slice(0, start);
+    var after = value.slice(end);
+
+    /* 与上下文之间自动补齐空行，避免围栏贴在前文上 */
+    var prefix = "";
+    if (before && before.charAt(before.length - 1) !== "\n") prefix = "\n\n";
+    else if (before) prefix = "\n";
+
+    var suffix = "";
+    if (after && after.charAt(0) !== "\n") suffix = "\n";
+
+    textarea.value = before + prefix + fence + suffix + after;
+
+    var caret =
+      before.length +
+      prefix.length +
+      ("```" + lang + "\n").length +
+      comment.length;
+    textarea.focus();
+    if (typeof textarea.setSelectionRange === "function") {
+      textarea.setSelectionRange(caret, caret);
+    }
+
+    /* 通知外部：实时预览 / 表单脏标记 */
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  /* Ctrl/Cmd + Alt + C：快捷插入代码块 */
+  function attachCodeBlockShortcut(textarea) {
+    if (!textarea || textarea.__oitreeCodeShortcutAttached) return;
+    textarea.__oitreeCodeShortcutAttached = true;
+
+    textarea.addEventListener("keydown", function (event) {
+      if (!(event.ctrlKey || event.metaKey) || !event.altKey) return;
+      if (event.key !== "c" && event.key !== "C") return;
+      event.preventDefault();
+      insertCodeBlock(textarea);
+    });
+  }
+
+  /* 绑定「插入代码」按钮到对应的 Markdown 文本域 */
+  function bindInsertCodeButton(buttonId, getTarget) {
+    var btn = document.getElementById(buttonId);
+    if (!btn || btn.__oitreeInsertCodeBound) return;
+    btn.__oitreeInsertCodeBound = true;
+
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      insertCodeBlock(getTarget());
     });
   }
 
@@ -550,10 +650,17 @@ window.OITreeEditor = (function () {
 
     if (readerDifficulty) {
       var diffInfo = difficultyMap.get(data.difficulty) || difficultyMap.get("none");
+      /* NOI/NOI+/CTS：深炭曜石徽章（无白边），文字统一用冷灰钢蓝 */
+      var isNoi = diffInfo.value === "noi";
       readerDifficulty.textContent = diffInfo.label;
-      readerDifficulty.style.background = hexToRgba(diffInfo.border, 0.18);
-      readerDifficulty.style.borderColor = hexToRgba(diffInfo.border, 0.55);
-      readerDifficulty.style.color = diffInfo.border;
+      readerDifficulty.dataset.diff = diffInfo.value;
+      readerDifficulty.style.background = isNoi
+        ? "#202024"
+        : hexToRgba(diffInfo.border, 0.18);
+      readerDifficulty.style.borderColor = isNoi
+        ? "#3f3f46"
+        : hexToRgba(diffInfo.border, 0.55);
+      readerDifficulty.style.color = getDifficultyTextColor(diffInfo.value);
     }
 
     if (readerStatus) {
@@ -802,8 +909,9 @@ window.OITreeEditor = (function () {
       opt.value = d.value;
       opt.textContent = d.label;
 
-      /* 🎨 每个选项独立着色（深色背景避免原生菜单发白） */
-      opt.style.color = d.border;
+      /* 🎨 每个选项独立着色（深色背景避免原生菜单发白）
+       * 与顶部筛选器共用 state.js 的唯一定义源 */
+      opt.style.color = getDifficultyTextColor(d.value);
       opt.style.background = "#101827";
       opt.style.fontWeight = "650";
 
@@ -845,6 +953,9 @@ window.OITreeEditor = (function () {
 
     setStatusValue: setStatusValue,
     getStatusValue: getStatusValue,
+
+    /* ⌨️ 在指定 Markdown 文本域的光标处插入代码块 */
+    insertCodeBlock: insertCodeBlock,
 
     /* 🎨 暴露同步方法（供外部按需刷新） */
     syncDifficultySelectColor: syncDifficultySelectColor,

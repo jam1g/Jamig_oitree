@@ -275,8 +275,10 @@
     var info = difficultyMap.get(value);
     if (!info) return;
 
-    difficultyFilter.style.color = info.border;
-    difficultyFilter.style.borderColor = hexToRgba(info.border, 0.55);
+    /* 🎨 统一取色：黑题为冷灰钢蓝 #94a3b8，与编辑弹窗完全一致 */
+    var textColor = getDifficultyTextColor(value);
+    difficultyFilter.style.color = textColor;
+    difficultyFilter.style.borderColor = hexToRgba(textColor, 0.55);
   }
 
   function populateDifficultyFilter() {
@@ -287,7 +289,7 @@
     var defOpt = document.createElement("option");
     defOpt.value = "";
     defOpt.textContent = "全部难度";
-    defOpt.style.color = "#e8eef7";
+    defOpt.style.color = DIFFICULTY_DEFAULT_TEXT_COLOR;
     defOpt.style.background = "#101827";
     difficultyFilter.appendChild(defOpt);
 
@@ -296,7 +298,8 @@
       opt.value = d.value;
       opt.textContent = d.label;
 
-      opt.style.color = d.border;
+      /* 与编辑弹窗共用 state.js 的唯一定义源 */
+      opt.style.color = getDifficultyTextColor(d.value);
       opt.style.background = "#101827";
       opt.style.fontWeight = "650";
 
@@ -621,11 +624,26 @@
     /* ① 显示当前连通块，隐藏其他无关节点 */
     CanvasAPI.setComponentFilter(comp.nodeIds);
 
-    /* ②~⑤ 自动整理当前可见题目 → 重绘连线 → 镜头居中 → 坐标回写持久化：
-     * autoLayoutVisible 仅针对当前可见节点集合重新计算 X/Y，
-     * 逐帧播放卡片归位动画并同步重绘连线，最终 persist() 写入云端同步数据。 */
-    if (typeof CanvasAPI.autoLayoutVisible === "function") {
-      CanvasAPI.autoLayoutVisible();
+    /* ② 依据「偏好设置 → 切换专题自动规整居中」决定镜头行为：
+     * 开启：对当前可见节点重新计算 X/Y，逐帧归位并居中镜头；
+     * 关闭：严格保留用户手动拖拽的坐标，仅平移镜头让专题落入视野。 */
+    var autoLayoutOnSwitch =
+      !window.userPreferences ||
+      window.userPreferences.autoLayoutOnSwitch !== false;
+
+    if (autoLayoutOnSwitch) {
+      if (typeof CanvasAPI.autoLayoutVisible === "function") {
+        CanvasAPI.autoLayoutVisible();
+      } else {
+        CanvasAPI.focusComponent(comp.nodeIds);
+      }
+    } else if (typeof CanvasAPI.centerNodes === "function") {
+      /* fit:false → 只平移视口，不缩放、不改动任何节点 (x, y) */
+      CanvasAPI.centerNodes(comp.nodeIds, {
+        animate: true,
+        fit: false,
+        reserveRight: 270,
+      });
     } else {
       CanvasAPI.focusComponent(comp.nodeIds);
     }
@@ -648,8 +666,13 @@
       });
     }
 
-    /* “全部显示”同样触发一键整理布局：整张题单重新分层排版 + 平滑运镜 */
-    if (typeof CanvasAPI.autoLayoutVisible === "function") {
+    /* “全部显示”：开启自动整理时整张题单重新分层排版；
+     * 关闭时仅调整镜头到全场视野，绝不改动用户手动布局。 */
+    var autoLayoutOnSwitch =
+      !window.userPreferences ||
+      window.userPreferences.autoLayoutOnSwitch !== false;
+
+    if (autoLayoutOnSwitch && typeof CanvasAPI.autoLayoutVisible === "function") {
       CanvasAPI.autoLayoutVisible();
     } else {
       CanvasAPI.fitToView();
@@ -1311,7 +1334,7 @@
         var titleEl = document.createElement("div");
         titleEl.className = "drawer-item-title";
         titleEl.textContent = item.title;
-        titleEl.style.color = diff.border || diff.accent;
+        titleEl.style.color = getDifficultyTextColor(diff.value);
 
         var metaEl = document.createElement("div");
         metaEl.className = "drawer-item-meta";
@@ -1801,6 +1824,9 @@
   window.OITreeApp = {
     renderWorkspace: renderWorkspace,
     renderWorkspaceAndWait: renderWorkspaceAndWait,
+    /* 供个人中心「题单管理」在增删改后实时刷新左侧分类栏 / 抽屉 / 搜索 */
+    refreshSceneUI: refreshSceneUI,
+    refreshSidebar: renderSidebar,
     isRendered: function () {
       return workspaceRendered;
     },

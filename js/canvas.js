@@ -1311,11 +1311,20 @@ window.OITreeCanvas = (function () {
     };
   }
 
+  /* 连线样式偏好：'bezier'（默认，平滑 S 型）| 'orthogonal'（正交直角折线） */
+  function getEdgeStyle() {
+    var prefs = typeof window !== "undefined" ? window.userPreferences : null;
+    return prefs && prefs.edgeStyle === "orthogonal" ? "orthogonal" : "bezier";
+  }
+
   function renderLinks() {
     linksLayer.replaceChildren();
 
     var active = spotlightIds !== null;
-    var nodeScreenRects = collectNodeScreenRects();
+    var edgeStyle = getEdgeStyle();
+    /* 直角折线不做曲线避障，省掉一次全量矩形采集 */
+    var nodeScreenRects =
+      edgeStyle === "bezier" ? collectNodeScreenRects() : [];
     var anchorFractions = buildEdgeAnchorFractions();
 
     links.forEach(function (link, key) {
@@ -1345,31 +1354,49 @@ window.OITreeCanvas = (function () {
       var x2 = end.x;
       var y2 = end.y;
 
-      /* 三次贝塞尔 + 跨级长线避障：
-       * 默认水平控制点；若曲线穿过中间卡片，会自动上下隆起绕行。 */
-      var geometry = resolveEdgeControlPoints(
-        x1, y1, x2, y2,
-        nodeScreenRects,
-        link.from, link.to
-      );
+      var d;
+      var mid;
+      var avoided = false;
 
-      var cx1 = geometry.cx1;
-      var cy1 = geometry.cy1;
-      var cx2 = geometry.cx2;
-      var cy2 = geometry.cy2;
+      if (edgeStyle === "orthogonal") {
+        /* 正交直角折线（90°）：横 → 竖 → 横，横平竖直的流程图风格 */
+        var midX = (x1 + x2) / 2;
+        d =
+          "M " + x1.toFixed(2) + " " + y1.toFixed(2) +
+          " L " + midX.toFixed(2) + " " + y1.toFixed(2) +
+          " L " + midX.toFixed(2) + " " + y2.toFixed(2) +
+          " L " + x2.toFixed(2) + " " + y2.toFixed(2);
+        mid = { x: midX, y: (y1 + y2) / 2 };
+      } else {
+        /* 三次贝塞尔 + 跨级长线避障：
+         * 默认水平控制点；若曲线穿过中间卡片，会自动上下隆起绕行。 */
+        var geometry = resolveEdgeControlPoints(
+          x1, y1, x2, y2,
+          nodeScreenRects,
+          link.from, link.to
+        );
 
-      var d =
-        "M " + x1.toFixed(2) + " " + y1.toFixed(2) +
-        " C " + cx1.toFixed(2) + " " + cy1.toFixed(2) +
-        ", " + cx2.toFixed(2) + " " + cy2.toFixed(2) +
-        ", " + x2.toFixed(2) + " " + y2.toFixed(2);
+        var cx1 = geometry.cx1;
+        var cy1 = geometry.cy1;
+        var cx2 = geometry.cx2;
+        var cy2 = geometry.cy2;
+
+        d =
+          "M " + x1.toFixed(2) + " " + y1.toFixed(2) +
+          " C " + cx1.toFixed(2) + " " + cy1.toFixed(2) +
+          ", " + cx2.toFixed(2) + " " + cy2.toFixed(2) +
+          ", " + x2.toFixed(2) + " " + y2.toFixed(2);
+
+        mid = cubicPointAt(x1, y1, cx1, cy1, cx2, cy2, x2, y2, 0.5);
+        avoided = geometry.avoided;
+      }
 
       var group = document.createElementNS(SVG_NS, "g");
       group.setAttribute("class", "edge-group");
       group.dataset.key = key;
       group.dataset.from = String(link.from);
       group.dataset.to = String(link.to);
-      group.dataset.avoided = geometry.avoided ? "1" : "0";
+      group.dataset.avoided = avoided ? "1" : "0";
 
       /* 底层 Halo：画布同色加粗描边，制造交叉处的立体切口 */
       var halo = document.createElementNS(SVG_NS, "path");
@@ -1398,8 +1425,7 @@ window.OITreeCanvas = (function () {
 
       group.append(halo, line);
 
-      /* 保留原有的中点删除按钮 */
-      var mid = cubicPointAt(x1, y1, cx1, cy1, cx2, cy2, x2, y2, 0.5);
+      /* 保留原有的中点删除按钮（直角折线取折段中点） */
       group.appendChild(buildLinkDeleteControl(key, mid.x, mid.y));
 
       linksLayer.appendChild(group);
@@ -1428,14 +1454,24 @@ window.OITreeCanvas = (function () {
 
     node.el.style.setProperty("--node-accent", diffInfo.accent);
     node.el.style.setProperty("--node-accent-border", diffInfo.border);
-    node.el.style.setProperty("--node-accent-soft", hexToRgba(diffInfo.border, 0.2));
+    /* 柔光底衬统一取 accent：NOI 为深炭曜石色，避免泛白光晕 */
+    node.el.style.setProperty(
+      "--node-accent-soft",
+      hexToRgba(diffInfo.accent, 0.2)
+    );
+    /* 供 CSS 精确命中最高难度（NOI/NOI+/CTS）的曜石配色 */
+    node.el.dataset.diff = diffInfo.value;
 
     var titleEl = node.el.querySelector(".node-title");
     titleEl.textContent = data.title || "未命名题目";
     titleEl.title = data.title || "";
 
     var tagsEl = node.el.querySelector(".node-tags");
-    tagsEl.textContent = data.tags || "";
+    var tagsTextEl = tagsEl.querySelector(".node-tags-text");
+    if (tagsTextEl) tagsTextEl.textContent = data.tags || "";
+
+    /* 卡片内部只展示知识点标签；难度统一由左侧色条 / 背景光晕体现，
+     * 黑题（NOI/NOI+/CTS）不再额外渲染难度标签，保持所有卡片结构一致。 */
     tagsEl.hidden = !data.tags;
 
     var linkBtn = node.el.querySelector(".node-btn-link");
@@ -1516,6 +1552,12 @@ window.OITreeCanvas = (function () {
 
     var tagsEl = document.createElement("div");
     tagsEl.className = "node-tags";
+    tagsEl.hidden = true;
+
+    var tagsTextEl = document.createElement("span");
+    tagsTextEl.className = "node-tags-text";
+
+    tagsEl.append(tagsTextEl);
 
     var actionsEl = document.createElement("div");
     actionsEl.className = "node-actions";
@@ -2882,6 +2924,10 @@ window.OITreeCanvas = (function () {
 
     setSelectedNode: setSelectedNode,
     renderLinks: renderLinks,
+    /* 画布 DOM 是否已就绪（供偏好设置等外部模块安全触发重绘） */
+    isReady: function () {
+      return !!(canvas && linksLayer);
+    },
     setNodePosition: setNodePosition,
     applyNodeData: applyNodeData,
     nextPosition: nextPosition,

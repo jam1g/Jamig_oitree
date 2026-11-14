@@ -31,17 +31,35 @@ window.OITreeDashboard = (function () {
   var DEFAULT_NAME = "Jamig";
   var DEFAULT_EMAIL = "lzhr128@126.com";
 
-  /* 洛谷官方 8 阶难度标准（不含“暂无评定”） */
-  var DIFFICULTY_TIERS = [
+  /* 兜底色阶：仅在 state.js 未加载时使用（正常流程不会走到） */
+  var FALLBACK_DIFFICULTY_TIERS = [
     { key: "beginner", label: "入门", color: "#fe4c61" },
     { key: "easy", label: "普及-", color: "#f39c11" },
     { key: "basic", label: "普及", color: "#ffc116" },
     { key: "easy-medium", label: "普及+/提高-", color: "#52c41a" },
-    { key: "medium", label: "提高", color: "#2196f3" },
-    { key: "hard", label: "提高+/省选-", color: "#1b55e2" },
-    { key: "harder", label: "省选/NOI-", color: "#9c27b0" },
-    { key: "noi", label: "NOI/NOI+/CTS", color: "#475569" },
+    { key: "medium", label: "提高", color: "#2578b5" },
+    { key: "hard", label: "提高+/省选-", color: "#0e90d2" },
+    { key: "harder", label: "省选/NOI-", color: "#9d3dcf" },
+    { key: "noi", label: "NOI/NOI+/CTS", color: "#33333a" },
   ];
+
+  /* 🎨 全站唯一定义源：图表 8 阶色阶直接派生自 state.js 的 DIFFICULTIES，
+   * 不再维护第二份难度颜色表，确保黑题等颜色与筛选器 / 编辑弹窗一致。 */
+  var DIFFICULTY_TIERS = (function () {
+    var list = Array.isArray(window.DIFFICULTIES) ? window.DIFFICULTIES : null;
+    if (!list || !list.length) return FALLBACK_DIFFICULTY_TIERS;
+
+    var tiers = [];
+    list.forEach(function (item) {
+      if (!item || item.value === "none") return;
+      tiers.push({
+        key: item.value,
+        label: item.label,
+        color: item.accent,
+      });
+    });
+    return tiers.length ? tiers : FALLBACK_DIFFICULTY_TIERS;
+  })();
 
   var BAR_MIN_HEIGHT = 15;
   var BAR_MAX_HEIGHT = 168;
@@ -58,6 +76,12 @@ window.OITreeDashboard = (function () {
     return window.OITreeCanvas || null;
   }
 
+  /* 个人中心「题单管理」面板激活时重新渲染题单卡片 */
+  function refreshListManagementPanel() {
+    var api = window.OITreeListManage;
+    if (api && typeof api.refresh === "function") api.refresh();
+  }
+
   function setViewActive(view, active) {
     if (!view) return;
     view.classList.toggle("active", !!active);
@@ -69,12 +93,12 @@ window.OITreeDashboard = (function () {
     var email = DEFAULT_EMAIL;
 
     if (user) {
-      var meta = user.user_metadata || {};
+      var auth = getAuth();
+      /* 统一显示名：user_metadata.nickname 优先，缺省时降级为邮箱前缀 */
       name =
-        meta.username ||
-        meta.display_name ||
-        meta.full_name ||
-        DEFAULT_NAME;
+        auth && typeof auth.getDisplayName === "function"
+          ? auth.getDisplayName(user)
+          : DEFAULT_NAME;
       email = user.email || DEFAULT_EMAIL;
     }
 
@@ -82,8 +106,30 @@ window.OITreeDashboard = (function () {
     if (emailEl) emailEl.textContent = email;
 
     if (avatarEl) {
-      var source = String(name || email || "J").trim();
-      avatarEl.textContent = (source.charAt(0) || "J").toUpperCase();
+      var authApi = getAuth();
+
+      if (authApi && typeof authApi.renderUserAvatar === "function") {
+        authApi.renderUserAvatar(
+          avatarEl,
+          user && typeof authApi.getAvatarUrl === "function"
+            ? authApi.getAvatarUrl(user)
+            : "",
+          name
+        );
+      } else {
+        /* 兜底：鉴权模块不可用时至少显示首字母 */
+        var source = String(name || email || "J").trim();
+        avatarEl.classList.remove("has-avatar-image");
+        avatarEl.textContent = (source.charAt(0) || "J").toUpperCase();
+      }
+    }
+  }
+
+  /* 账号设置面板按需刷新（避免每次登录态变化都重填未保存的输入） */
+  function refreshAccountPanel() {
+    var accountApi = window.OITreeAccount;
+    if (accountApi && typeof accountApi.refresh === "function") {
+      accountApi.refresh();
     }
   }
 
@@ -453,6 +499,19 @@ window.OITreeDashboard = (function () {
     if (panel === "home") {
       scheduleHomeChartRefresh();
     }
+
+    if (panel === "lists") {
+      refreshListManagementPanel();
+    }
+
+    if (panel === "prefs") {
+      var prefsApi = window.OITreePreferences;
+      if (prefsApi && typeof prefsApi.refresh === "function") prefsApi.refresh();
+    }
+
+    if (panel === "account") {
+      refreshAccountPanel();
+    }
   }
 
   /* 切回个人中心时收起画布上的浮层，保证 Dashboard 干净 */
@@ -481,6 +540,9 @@ window.OITreeDashboard = (function () {
 
     /* 视图可见后再按真实尺寸渲染首页图表 */
     scheduleHomeChartRefresh();
+
+    if (currentPanel === "lists") refreshListManagementPanel();
+    if (currentPanel === "account") refreshAccountPanel();
   }
 
   function showCanvas(options) {
@@ -524,6 +586,11 @@ window.OITreeDashboard = (function () {
     var canvasApi = getCanvasApi();
     if (!canvasApi) return;
 
+    /* 仅按题单进入画板（无具体题目）：显示整张题单并自动居中 */
+    var focusCategoryOnly =
+      !!(focus && focus.categoryId) &&
+      (focus.nodeId === undefined || focus.nodeId === null);
+
     /* display 切换后同步重绘；getBoundingClientRect 会强制完成一次布局 */
     if (focus && focus.nodeId !== undefined && focus.nodeId !== null) {
       var node =
@@ -560,6 +627,17 @@ window.OITreeDashboard = (function () {
     if (typeof canvasApi.applyView === "function") canvasApi.applyView();
     if (typeof canvasApi.renderLinks === "function") canvasApi.renderLinks();
 
+    /* 题单级跳转：清空连通块独占、整单居中，不缩到单一分支 */
+    if (focusCategoryOnly) {
+      if (typeof canvasApi.setComponentFilter === "function") {
+        canvasApi.setComponentFilter(null);
+      }
+      if (typeof canvasApi.fitToView === "function") {
+        canvasApi.fitToView();
+      }
+      return;
+    }
+
     if (typeof canvasApi.autoFocusFirstComponent === "function") {
       canvasApi.autoFocusFirstComponent();
     }
@@ -575,7 +653,7 @@ window.OITreeDashboard = (function () {
       return;
     }
 
-    var originalText = logoutBtn ? logoutBtn.textContent : "退出登录";
+    var originalText = logoutBtn ? logoutBtn.textContent.trim() : "退出登录";
 
     if (logoutBtn) {
       logoutBtn.disabled = true;
@@ -598,7 +676,7 @@ window.OITreeDashboard = (function () {
     nameEl = $("dashboard-user-name");
     emailEl = $("dashboard-user-email");
     startBtn = $("btn-start-record");
-    logoutBtn = $("dashboard-logout");
+    logoutBtn = $("account-logout-btn");
     chartTotalEl = $("total-problems-num");
     barsTrackEl = $("bars-track");
     difficultyPopover = $("diff-popover");

@@ -587,6 +587,25 @@
   transform: translate(-50%, -50%) scale(1);
 }
 
+/* 🖤 黑题（NOI/NOI+/CTS）：微增亮度的纯净黑曜石（Gunmetal Obsidian）
+ * 无白边：仅用 5px 深炭色左侧条 + 柔和暗影勾勒轮廓，保持“黑题”本色 */
+.node[data-diff="noi"] {
+  --node-accent: transparent !important; /* 关闭渐变左条，改用真实 border-left */
+  border-color: transparent !important;
+  border-left: 5px solid #33333a !important;
+  box-shadow:
+    0 0 0 1px rgba(63, 63, 70, 0.45),
+    0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* 悬停：左侧条与轮廓微弱提亮一档，低调沉稳 */
+.node[data-diff="noi"]:hover:not(.is-dragging):not(.is-target):not(.is-highlighted):not(.is-selected) {
+  border-left-color: #5a5a64 !important;
+  box-shadow:
+    0 0 15px rgba(74, 74, 82, 0.55),
+    0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
 .node.is-dragging {
   cursor: grabbing;
   transform: translate(-50%, -50%) scale(1.04);
@@ -670,12 +689,25 @@
 }
 
 .node-tags {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   pointer-events: none;
+}
+
+.node-tags[hidden] {
+  display: none;
+}
+
+.node-tags-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .node-tags:empty {
