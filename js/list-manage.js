@@ -1448,31 +1448,17 @@ window.OITreeListManage = (function () {
     if (!modal) return;
 
     lastFocusedElement = document.activeElement;
-    modal.hidden = false;
+    showOverlay(modal);
     document.body.classList.add("modal-open");
   }
 
   function closeModal(modal) {
-    if (!modal || modal.hidden) return;
+    if (!modal || !isOverlayOpen(modal)) return;
 
-    modal.hidden = true;
+    hideOverlay(modal);
 
     if (!isAnyListModalOpen()) {
-      var otherIds = [
-        "modal",
-        "cat-modal",
-        "topic-modal",
-        "zen-modal",
-        "reader-modal",
-        "auth-modal",
-      ];
-
-      var otherOpen = otherIds.some(function (id) {
-        var node = $(id);
-        return node && !node.hidden;
-      });
-
-      if (!otherOpen) document.body.classList.remove("modal-open");
+      releaseBodyScrollLockIfIdle();
     }
 
     if (

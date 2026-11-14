@@ -18,10 +18,19 @@
   background: rgba(6, 10, 16, 0.74);
   backdrop-filter: blur(5px);
   animation: fade-in 140ms ease-out;
+  /* 仅在打开态允许接收点击；关闭态由下方规则彻底移出命中测试 */
+  pointer-events: auto;
 }
 
-.modal-backdrop[hidden] {
-  display: none;
+/* 🛡️ 关闭态：必须完全退出命中测试。
+ * 仅设置 opacity: 0 不够——透明图层依然会拦截整页的点击事件，
+ * 表现为「所有按钮偶发点不动，刷新才恢复」。 */
+.modal-backdrop[hidden],
+.modal-backdrop.hidden,
+.modal-backdrop.is-closing {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 .modal {

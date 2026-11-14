@@ -15,6 +15,19 @@ window.OITreeCanvas = (function () {
   var arrowMarker = null;
   var zoomValue = null;
 
+  /* =========================================================
+   *  🛡️ 指针交互锁（平移 / 卡片拖拽 / 拉线）
+   *  - 每一次拖拽开始都会登记 cleanup
+   *  - 窗口失焦、鼠标移出窗口、pointerup 丢失时统一强制释放
+   *  - 彻底避免 isPanning / isDragging / connectionReveal 永久卡死
+   * ========================================================= */
+  var activeInteraction = null;
+  var interactionGuardsBound = false;
+  var nodeActionsBound = false;
+
+  /* 小于该位移视为普通点击，不进入拖拽态（避免吞掉按钮点击） */
+  var PAN_DRAG_THRESHOLD = 4;
+
   function bindCanvasDom(refs) {
     canvas = refs.canvas;
     world = refs.world;
@@ -22,6 +35,10 @@ window.OITreeCanvas = (function () {
     previewLayer = refs.previewLayer;
     arrowMarker = refs.arrowMarker;
     zoomValue = refs.zoomValue;
+
+    /* 事件委托 + 全局拖拽兜底只绑定一次，与节点重建彻底解耦 */
+    bindInteractionGuards();
+    bindNodeActionDelegation();
   }
 
   var canvasInfo = null;
@@ -1567,6 +1584,8 @@ window.OITreeCanvas = (function () {
     linkBtn.target = "_blank";
     linkBtn.rel = "noopener noreferrer";
     linkBtn.title = "在新标签页打开题目";
+    /* 事件委托标识：点击由画布根节点统一分发，节点重建无需重新绑定 */
+    linkBtn.dataset.nodeAction = "link";
     linkBtn.hidden = true;
 
     var linkIcon = document.createElement("span");
@@ -1580,6 +1599,8 @@ window.OITreeCanvas = (function () {
     noteBtn.type = "button";
     noteBtn.className = "node-btn node-btn-note";
     noteBtn.title = "阅读复盘笔记 / 题解";
+    /* 事件委托标识：点击由画布根节点统一分发，节点重建无需重新绑定 */
+    noteBtn.dataset.nodeAction = "note";
 
     var noteIcon = document.createElement("span");
     noteIcon.setAttribute("aria-hidden", "true");
@@ -1612,32 +1633,6 @@ window.OITreeCanvas = (function () {
     return el;
   }
 
-  function setupNodeActionButtons(node) {
-    var noteBtn = node.el.querySelector(".node-btn-note");
-    if (!noteBtn) return;
-
-    noteBtn.addEventListener("pointerdown", function (e) {
-      e.stopPropagation();
-    });
-
-    noteBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      e.preventDefault();
-
-      if (typeof node.__onNoteClick === "function") {
-        node.__onNoteClick(node);
-        return;
-      }
-
-      if (window.OITreeEditor && typeof window.OITreeEditor.openReaderModal === "function") {
-        window.OITreeEditor.openReaderModal(node);
-        return;
-      }
-
-      console.error("[oitree] 笔记按钮无可用处理器");
-    });
-  }
-
   function buildSceneNode(nodeData, animate) {
     if (animate === undefined) animate = true;
 
@@ -1661,7 +1656,6 @@ window.OITreeCanvas = (function () {
     nodes.set(node.id, node);
     enableNodeInteraction(node);
     enableAnchors(node);
-    setupNodeActionButtons(node);
 
     if (onNodeClick) {
       node.__onClick = onNodeClick;
@@ -1828,18 +1822,27 @@ window.OITreeCanvas = (function () {
         setNodePosition(node, current.x - offsetX, current.y - offsetY);
       };
 
+      var cleanup = function () {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+
+        node.el.classList.remove("is-dragging");
+        releasePointerCaptureSafe(node.el, pointerId);
+        unregisterInteraction();
+
+        /* 拖拽过才写回位置；被强制复位时也要落盘，避免位置丢失 */
+        if (dragging) persist();
+        dragging = false;
+      };
+
       var onUp = function (upEvent) {
         if (upEvent.pointerId !== pointerId) return;
 
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        window.removeEventListener("pointercancel", onUp);
+        var wasDragging = dragging;
+        cleanup();
 
-        node.el.classList.remove("is-dragging");
-
-        if (dragging) {
-          persist();
-        } else {
+        if (!wasDragging) {
           setSelectedNode(node.id);
           if (typeof node.__onClick === "function") {
             node.__onClick(node);
@@ -1847,9 +1850,16 @@ window.OITreeCanvas = (function () {
         }
       };
 
+      var onCancel = function (cancelEvent) {
+        if (cancelEvent.pointerId !== pointerId) return;
+        cleanup();
+      };
+
+      registerInteraction(cleanup);
+
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
-      window.addEventListener("pointercancel", onUp);
+      window.addEventListener("pointercancel", onCancel);
     });
   }
 
@@ -1940,19 +1950,24 @@ window.OITreeCanvas = (function () {
         function cleanup() {
           window.removeEventListener("pointermove", onMove);
           window.removeEventListener("pointerup", onUp);
-          window.removeEventListener("pointercancel", onUp);
+          window.removeEventListener("pointercancel", onCancel);
           window.removeEventListener("keydown", onKeyDown, true);
           setHover(null);
           if (previewLine) {
             previewLine.remove();
             previewLine = null;
           }
+          releasePointerCaptureSafe(anchor, pointerId);
+          unregisterInteraction();
         }
 
         function cancelConnectionDrag() {
           cleanup();
           endConnectionReveal(true);
         }
+
+        /* 注册到全局交互锁：窗口失焦 / 鼠标移出 / pointerup 丢失时自动放弃拉线 */
+        registerInteraction(cancelConnectionDrag);
 
         var onKeyDown = function (keyEvent) {
           if (keyEvent.key !== "Escape") return;
@@ -2015,11 +2030,218 @@ window.OITreeCanvas = (function () {
           }
         };
 
+        var onCancel = function () {
+          cancelConnectionDrag();
+        };
+
         window.addEventListener("pointermove", onMove);
         window.addEventListener("pointerup", onUp);
-        window.addEventListener("pointercancel", onUp);
+        window.addEventListener("pointercancel", onCancel);
         window.addEventListener("keydown", onKeyDown, true);
       });
+    });
+  }
+
+  /* =========================================================
+   *  🛡️ 指针交互锁：登记、释放与全局兜底
+   * ========================================================= */
+
+  function releasePointerCaptureSafe(el, pointerId) {
+    if (!el || pointerId === undefined || pointerId === null) return;
+    try {
+      if (typeof el.hasPointerCapture === "function" && el.hasPointerCapture(pointerId)) {
+        el.releasePointerCapture(pointerId);
+      }
+    } catch (_) {
+      /* 指针已释放 / 元素已移除：忽略 */
+    }
+  }
+
+  function registerInteraction(cleanup) {
+    if (typeof cleanup !== "function") return;
+
+    /* 理论上同一时刻只允许一个拖拽；若存在残留交互，先强制释放 */
+    if (activeInteraction && activeInteraction !== cleanup) {
+      forceResetInteractions("superseded");
+    }
+
+    activeInteraction = cleanup;
+  }
+
+  function unregisterInteraction() {
+    activeInteraction = null;
+  }
+
+  /**
+   * 无条件复位所有拖拽 / 平移 / 拉线状态。
+   * 触发场景：窗口失焦、鼠标移出窗口、pointerup 丢失、切换题单、UI 自愈。
+   */
+  function forceResetInteractions(reason) {
+    var cleanup = activeInteraction;
+    activeInteraction = null;
+
+    if (typeof cleanup === "function") {
+      try {
+        cleanup(reason || "force-reset");
+      } catch (err) {
+        console.warn("[oitree] 释放拖拽状态时出现异常：", err);
+      }
+    }
+
+    /* 兜底清场：即使 cleanup 执行不完整，也抹掉所有残留视觉状态 */
+    if (canvas) {
+      canvas.classList.remove("is-panning");
+      if (session.spacePressed) canvas.classList.add("is-pan-ready");
+      else canvas.classList.remove("is-pan-ready");
+    }
+
+    nodes.forEach(function (node) {
+      if (node.el) node.el.classList.remove("is-dragging", "is-target");
+    });
+
+    if (previewLine) {
+      previewLine.remove();
+      previewLine = null;
+    }
+
+    if (connectionReveal) {
+      endConnectionReveal(true);
+    }
+  }
+
+  /**
+   * 在 window / document 级别兜底监听：
+   * 只要松开鼠标（或鼠标移出窗口、窗口失焦），无条件复位拖拽状态。
+   */
+  function bindInteractionGuards() {
+    if (interactionGuardsBound || typeof window === "undefined") return;
+    interactionGuardsBound = true;
+
+    window.addEventListener(
+      "pointerup",
+      function (event) {
+        if (!activeInteraction) return;
+
+        /* 等本轮事件处理完成后再检查：正常情况下交互自己的 onUp 会先释放 */
+        window.setTimeout(function () {
+          if (activeInteraction && event.buttons === 0) {
+            console.warn("[oitree] 检测到 pointerup 丢失，已强制复位拖拽状态");
+            forceResetInteractions("pointerup-watchdog");
+          }
+        }, 0);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "pointercancel",
+      function () {
+        forceResetInteractions("pointercancel");
+      },
+      true
+    );
+
+    /* 兼容兜底：个别浏览器 / 自动化环境下 pointerup 可能丢失，
+     * 只要 mouseup 到达就无条件复位。 */
+    window.addEventListener(
+      "mouseup",
+      function () {
+        if (activeInteraction) forceResetInteractions("mouseup-watchdog");
+      },
+      true
+    );
+
+    /* 鼠标键已全部松开却仍在移动 → 说明 pointerup 丢了 */
+    window.addEventListener(
+      "pointermove",
+      function (event) {
+        if (event.buttons === 0 && activeInteraction) {
+          forceResetInteractions("buttons-released");
+        }
+      },
+      true
+    );
+
+    window.addEventListener("blur", function () {
+      forceResetInteractions("window-blur");
+    });
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) forceResetInteractions("visibility-hidden");
+    });
+
+    /* 鼠标移出浏览器窗口：拖拽状态一律放弃，避免回来后才“粘住” */
+    document.addEventListener("mouseleave", function () {
+      forceResetInteractions("mouseleave-window");
+    });
+
+    window.addEventListener("mouseleave", function () {
+      forceResetInteractions("mouseleave-window");
+    });
+  }
+
+  /* =========================================================
+   *  🎯 卡片按钮事件委托（题面 / 笔记）
+   *  - 只在画布根节点绑定一次，节点重建不会丢失监听
+   *  - 捕获阶段拦截 pointerdown，避免卡片拖拽吞掉点击
+   * ========================================================= */
+
+  function bindNodeActionDelegation() {
+    if (!canvas || nodeActionsBound) return;
+    nodeActionsBound = true;
+
+    canvas.addEventListener(
+      "pointerdown",
+      function (event) {
+        if (!event.target || !event.target.closest) return;
+        if (!event.target.closest("[data-node-action]")) return;
+        /* 捕获阶段先于卡片自身的 pointerdown：阻止拖拽逻辑接管 */
+        event.stopPropagation();
+      },
+      true
+    );
+
+    canvas.addEventListener("click", function (event) {
+      if (!event.target || !event.target.closest) return;
+
+      var actionEl = event.target.closest("[data-node-action]");
+      if (!actionEl) return;
+
+      var nodeEl = actionEl.closest(".node");
+      if (!nodeEl) return;
+
+      var node = nodes.get(Number(nodeEl.dataset.id));
+      if (!node) return;
+
+      var action = actionEl.getAttribute("data-node-action");
+      console.log("[oitree] 触发按钮操作:", action, "node=" + node.id);
+
+      event.stopPropagation();
+
+      if (action === "link") {
+        /* 题面按钮：保留 <a target="_blank"> 的原生跳转行为 */
+        if (!actionEl.getAttribute("href")) event.preventDefault();
+        return;
+      }
+
+      if (action !== "note") return;
+
+      event.preventDefault();
+
+      if (typeof node.__onNoteClick === "function") {
+        node.__onNoteClick(node);
+        return;
+      }
+
+      if (
+        window.OITreeEditor &&
+        typeof window.OITreeEditor.openReaderModal === "function"
+      ) {
+        window.OITreeEditor.openReaderModal(node);
+        return;
+      }
+
+      console.error("[oitree] 笔记按钮无可用处理器");
     });
   }
 
@@ -2051,7 +2273,9 @@ window.OITreeCanvas = (function () {
         setSelectedNode(null);
       }
 
-      event.preventDefault();
+      /* 中键（自动滚动）/ 右键（上下文菜单）立即阻止默认行为；
+       * 左键延后到真正越过阈值，保证普通点击不被吞掉。 */
+      if (isMiddle || isRight) event.preventDefault();
 
       var pointerId = event.pointerId;
       try {
@@ -2060,29 +2284,56 @@ window.OITreeCanvas = (function () {
 
       var startClient = { x: event.clientX, y: event.clientY };
       var startView = { x: view.x, y: view.y };
+      var panning = false;
 
       var onMove = function (moveEvent) {
         if (moveEvent.pointerId !== pointerId) return;
-        view.x = startView.x + (moveEvent.clientX - startClient.x);
-        view.y = startView.y + (moveEvent.clientY - startClient.y);
+
+        var dx = moveEvent.clientX - startClient.x;
+        var dy = moveEvent.clientY - startClient.y;
+
+        /* 微小平移视为普通点击：超过阈值才进入拖拽态 */
+        if (!panning) {
+          if (Math.hypot(dx, dy) <= PAN_DRAG_THRESHOLD) return;
+          panning = true;
+          canvas.classList.add("is-panning");
+          moveEvent.preventDefault();
+        }
+
+        view.x = startView.x + dx;
+        view.y = startView.y + dy;
         applyView();
+      };
+
+      var cleanup = function () {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        canvas.classList.remove("is-panning");
+        if (session.spacePressed) canvas.classList.add("is-pan-ready");
+        releasePointerCaptureSafe(canvas, pointerId);
+        unregisterInteraction();
+
+        /* 漫游画布只保存视角，不上云；普通点击不触发保存 */
+        if (panning) persist({ cloud: false });
+        panning = false;
       };
 
       var onUp = function (upEvent) {
         if (upEvent.pointerId !== pointerId) return;
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        window.removeEventListener("pointercancel", onUp);
-        canvas.classList.remove("is-panning");
-        if (session.spacePressed) canvas.classList.add("is-pan-ready");
-        /* 漫游画布只保存视角，不上云 */
-        persist({ cloud: false });
+        cleanup();
       };
 
-      canvas.classList.add("is-panning");
+      var onCancel = function (cancelEvent) {
+        if (cancelEvent.pointerId !== pointerId) return;
+        cleanup();
+      };
+
+      registerInteraction(cleanup);
+
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
-      window.addEventListener("pointercancel", onUp);
+      window.addEventListener("pointercancel", onCancel);
     });
 
     canvas.addEventListener(
@@ -2817,6 +3068,9 @@ window.OITreeCanvas = (function () {
     var cat = getActiveCategory();
     var autoFocusFirst = !!(options && options.autoFocusFirst);
 
+    /* 切换题单前先释放可能残留的拖拽 / 拉线交互，避免旧节点被删除后状态卡死 */
+    forceResetInteractions("category-load");
+
     stopViewAnimation();
     stopLayoutAnimation(false);
     clearNodeFlash();
@@ -2935,6 +3189,8 @@ window.OITreeCanvas = (function () {
     createNewNode: createNewNode,
     deleteNodeById: deleteNodeById,
     bindCanvasPanZoom: bindCanvasPanZoom,
+    /* 🛡️ 强制复位平移 / 拖拽 / 拉线状态（窗口失焦、UI 自愈时调用） */
+    resetInteractions: forceResetInteractions,
     autoLayout: autoLayout,
     autoLayoutVisible: autoLayoutVisible,
     centerNodes: centerNodes,

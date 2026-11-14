@@ -523,7 +523,10 @@ window.OITreeDashboard = (function () {
     var userBtn = $("toolbar-user-btn");
 
     if (drawer) drawer.classList.remove("is-open");
-    if (backdrop) backdrop.classList.remove("is-visible");
+    if (backdrop) {
+      backdrop.classList.remove("is-visible");
+      backdrop.style.pointerEvents = "none";
+    }
     if (drawerToggle) drawerToggle.classList.remove("is-open");
     if (userMenu) userMenu.classList.add("hidden");
     if (userBtn) userBtn.setAttribute("aria-expanded", "false");

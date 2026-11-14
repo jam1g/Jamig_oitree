@@ -287,13 +287,18 @@ body:not(.auth-locked) .sidebar {
   z-index: 90;
   background: rgba(4, 8, 14, 0.42);
   opacity: 0;
+  /* 🛡️ 关闭态：visibility:hidden + pointer-events:none 双保险，
+   * 绝不让透明遮罩继续拦截全站点击。 */
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 260ms ease;
+  transition: opacity 260ms ease, visibility 0s linear 260ms;
 }
 
 .drawer-backdrop.is-visible {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
+  transition: opacity 260ms ease, visibility 0s;
 }
 
 .drawer {

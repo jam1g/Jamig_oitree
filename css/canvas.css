@@ -33,9 +33,20 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  /* 🛡️ 整张连线画布永远不参与命中测试，
+   * 只有具体的 <path class="edge-line"> 才单独开启 stroke 命中。 */
   pointer-events: none;
   z-index: 2;
   overflow: visible;
+}
+
+/* 连线图层 / 预览图层 / 连线分组：同样全部禁用命中，避免透明 SVG 盖住按钮 */
+#links,
+#links-layer,
+#preview-layer,
+.edge-group,
+.preview-line {
+  pointer-events: none;
 }
 
 .world {
@@ -818,12 +829,16 @@
   transform: scale(0.5);
   cursor: crosshair;
   z-index: 4;
+  /* 🛡️ 不可见的锚点绝不能接收点击，否则会在卡片边缘吞掉按钮点击 */
+  pointer-events: none;
   transition: opacity 150ms ease, transform 150ms ease, box-shadow 150ms ease;
 }
 
-.node:hover .anchor {
+.node:hover .anchor,
+.node:focus-within .anchor {
   opacity: 1;
   transform: scale(1);
+  pointer-events: auto;
 }
 
 .node .anchor:hover {
@@ -859,6 +874,7 @@
   .anchor {
     opacity: 0.85;
     transform: scale(0.9);
+    pointer-events: auto;
   }
 }
 

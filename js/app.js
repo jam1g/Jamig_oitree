@@ -14,6 +14,25 @@
 
 (function () {
   /* =========================================================
+   *  🩺 全局异常捕获
+   *  未捕获的脚本异常会中断后续逻辑，是「按钮集体失效」的常见诱因，
+   *  这里统一输出到控制台，便于定位。
+   * ========================================================= */
+
+  window.addEventListener("error", function (event) {
+    console.error(
+      "[oitree] 未捕获脚本异常：",
+      event.message,
+      "(" + (event.filename || "?") + ":" + (event.lineno || 0) + ")",
+      event.error
+    );
+  });
+
+  window.addEventListener("unhandledrejection", function (event) {
+    console.error("[oitree] 未处理的 Promise 异常：", event.reason);
+  });
+
+  /* =========================================================
    *  便捷引用
    * ========================================================= */
 
@@ -1042,7 +1061,7 @@
 
     catNameInput.classList.remove("is-invalid");
 
-    catModal.hidden = false;
+    showOverlay(catModal);
     document.body.classList.add("modal-open");
 
     requestAnimationFrame(function () {
@@ -1052,21 +1071,16 @@
   }
 
   function closeCategoryModal() {
-    catModal.hidden = true;
-    var zenModalEl = document.getElementById("zen-modal");
-    var readerModalEl = document.getElementById("reader-modal");
-    if (
-      modal.hidden &&
-      (!zenModalEl || zenModalEl.hidden) &&
-      (!readerModalEl || readerModalEl.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    hideOverlay(catModal);
+
     session.editingCategoryId = null;
     catModalMode = "edit";
     catForm.reset();
 
     EditorAPI.setCatDescTab("edit");
+
+    /* 所有弹窗都关闭后才解除滚动锁，避免状态残留 */
+    releaseBodyScrollLockIfIdle();
   }
 
   /* =========================================================
@@ -1102,7 +1116,7 @@
       topicFieldName.classList.remove("is-invalid");
     }
 
-    topicModal.hidden = false;
+    showOverlay(topicModal);
     document.body.classList.add("modal-open");
 
     requestAnimationFrame(function () {
@@ -1115,7 +1129,7 @@
   function closeTopicRenameModal() {
     if (!topicModal) return;
 
-    topicModal.hidden = true;
+    hideOverlay(topicModal);
     topicRenameTarget = null;
 
     if (topicForm) topicForm.reset();
@@ -1125,16 +1139,7 @@
     }
 
     /* 仅当没有其他弹窗时才解除页面滚动锁 */
-    var zenModalEl = document.getElementById("zen-modal");
-    var readerModalEl = document.getElementById("reader-modal");
-    if (
-      modal.hidden &&
-      catModal.hidden &&
-      (!zenModalEl || zenModalEl.hidden) &&
-      (!readerModalEl || readerModalEl.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    releaseBodyScrollLockIfIdle();
   }
 
   function saveTopicRename() {
@@ -1175,6 +1180,8 @@
   function openDrawer() {
     drawer.classList.add("is-open");
     drawerBackdrop.classList.add("is-visible");
+    /* 清除关闭态留下的硬性 pointer-events: none，保证遮罩可点击关闭 */
+    drawerBackdrop.style.removeProperty("pointer-events");
     drawerToggle.classList.add("is-open");
     renderDrawer();
   }
@@ -1182,6 +1189,8 @@
   function closeDrawer() {
     drawer.classList.remove("is-open");
     drawerBackdrop.classList.remove("is-visible");
+    /* 关闭态彻底退出命中测试，绝不允许透明遮罩拦截全站点击 */
+    drawerBackdrop.style.pointerEvents = "none";
     drawerToggle.classList.remove("is-open");
   }
 
@@ -1789,6 +1798,17 @@
     canvasEl.classList.remove("is-pan-ready");
   });
 
+  /* 窗口失焦：清理可能卡死的「空格平移」与拖拽状态。
+   * 否则切走窗口 / 松开在窗口外时，keyup / pointerup 都可能收不到。 */
+  window.addEventListener("blur", function () {
+    session.spacePressed = false;
+    if (canvasEl) canvasEl.classList.remove("is-pan-ready");
+
+    if (CanvasAPI && typeof CanvasAPI.resetInteractions === "function") {
+      CanvasAPI.resetInteractions("window-blur");
+    }
+  });
+
   /* =========================================================
    *  窗口尺寸变化
    * ========================================================= */
@@ -1802,6 +1822,151 @@
       CanvasAPI.renderLinks();
     }, 120);
   });
+
+  /* =========================================================
+   *  🩺 UI 自愈：清理残留遮罩 / 拖拽锁
+   *  针对「偶发全站按钮点不动、刷新才恢复」：
+   *  - 任何“看不见却仍能接收点击”的遮罩都会被强制关闭
+   *  - 任何残留的平移 / 拖拽 / 拉线状态都会被强制复位
+   * ========================================================= */
+
+  var lastHealAt = 0;
+  var authLockWarned = false;
+
+  function isBackdropInvisible(el) {
+    var cs = window.getComputedStyle(el);
+    if (cs.display === "none") return false; /* 已彻底隐藏，无需处理 */
+    if (cs.visibility === "hidden") return true;
+    return parseFloat(cs.opacity || "1") < 0.02;
+  }
+
+  function healModalOverlays() {
+    var now = Date.now();
+    var modals = document.querySelectorAll(".modal-backdrop");
+
+    for (var i = 0; i < modals.length; i++) {
+      var el = modals[i];
+      var markedClosed = el.hidden || el.classList.contains("hidden");
+
+      if (markedClosed) {
+        /* 关闭态却仍残留可命中的 display：强制收回 */
+        if (el.style.display && el.style.display !== "none") {
+          el.style.display = "none";
+          console.warn("[oitree] 检测到关闭态遮罩残留，已强制隐藏：", el.id);
+        }
+        if (el.style.pointerEvents !== "none") {
+          el.style.pointerEvents = "none";
+        }
+        continue;
+      }
+
+      /* 刚打开的遮罩可能仍在 fade-in 动画的透明帧，留出宽限期 */
+      if (now - (el.__oitreeOpenedAt || 0) < 600) continue;
+
+      if (isBackdropInvisible(el)) {
+        console.warn("[oitree] 检测到不可见遮罩残留，已强制关闭：", el.id);
+        hideOverlay(el);
+      }
+    }
+
+    var drawerEl = document.getElementById("drawer");
+    var drawerBackdropEl = document.getElementById("drawer-backdrop");
+
+    if (drawerBackdropEl) {
+      var drawerOpen = !!(drawerEl && drawerEl.classList.contains("is-open"));
+
+      if (!drawerOpen && drawerBackdropEl.classList.contains("is-visible")) {
+        console.warn("[oitree] 检测到抽屉遮罩残留，已强制移除");
+        drawerBackdropEl.classList.remove("is-visible");
+      }
+
+      /* 关闭态硬性禁止接收指针事件 */
+      if (drawerOpen) {
+        drawerBackdropEl.style.removeProperty("pointer-events");
+      } else {
+        drawerBackdropEl.style.pointerEvents = "none";
+      }
+    }
+  }
+
+  function healUi() {
+    var now = Date.now();
+    if (now - lastHealAt < 400) return;
+    lastHealAt = now;
+
+    /* 锁屏态残留：主界面会被 visibility/pointer-events 全面禁用 */
+    if (document.body.classList.contains("auth-locked")) {
+      if (!authLockWarned) {
+        authLockWarned = true;
+        console.warn(
+          "[oitree] 页面仍处于 auth-locked 锁屏态：主界面按钮会被整体拦截（需等待鉴权完成）"
+        );
+      }
+    } else {
+      authLockWarned = false;
+    }
+
+    healModalOverlays();
+
+    /* 分类拖拽排序：dragend 丢失时清除残留拖拽源与高亮指示 */
+    if (dragSrcId !== null || dragOverId !== null) {
+      clearDragIndicators();
+      dragSrcId = null;
+      dragOverId = null;
+      dragOverPos = null;
+    }
+
+    /* 拖拽 / 平移锁：交给画布引擎统一复位（无交互时为空操作） */
+    if (CanvasAPI && typeof CanvasAPI.resetInteractions === "function") {
+      CanvasAPI.resetInteractions("ui-heal");
+    }
+
+    /* 页面滚动锁一致性：所有弹窗都关闭时不允许残留 modal-open */
+    releaseBodyScrollLockIfIdle();
+  }
+
+  /* 每次新的按下 / 窗口重新获得焦点时做一次自愈检查 */
+  document.addEventListener(
+    "pointerdown",
+    function () {
+      healUi();
+    },
+    true
+  );
+
+  window.addEventListener("focus", healUi);
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) healUi();
+  });
+
+  /* =========================================================
+   *  🩺 点击诊断：确认事件是否成功派发到按钮
+   * ========================================================= */
+
+  document.addEventListener(
+    "click",
+    function (event) {
+      if (!event.target || !event.target.closest) return;
+
+      var btn = event.target.closest(
+        "button, [data-node-action], .cat-action-btn, .root-nav-item, .dashboard-nav-btn"
+      );
+      if (!btn) return;
+
+      var label =
+        btn.getAttribute("data-node-action") ||
+        btn.id ||
+        (btn.className && String(btn.className)) ||
+        btn.tagName;
+
+      console.log("[oitree] 按钮点击已派发：", label);
+    },
+    true
+  );
+
+  /* 控制台可手动调用，排查「点不动」时先执行 oitreeHealUi() */
+  window.oitreeHealUi = healUi;
 
   /* =========================================================
    *  启动
@@ -1833,10 +1998,25 @@
     resetRenderState: function () {
       workspaceRendered = false;
     },
+    /* 🩺 手动自愈：清理残留遮罩 / 拖拽锁（控制台可调用） */
+    healUi: healUi,
   };
 
-  /* 兜底：鉴权模块缺失（例如脚本加载失败）时仍渲染工作台，避免空白页 */
+  /* 兜底：鉴权模块缺失（例如脚本加载失败）时仍渲染工作台，避免空白页。
+   * 同时清掉锁屏类，防止 body 长期停留在 auth-locked 导致全站按钮不可点。 */
   if (!window.OITreeAuth) {
+    document.body.classList.remove(
+      "auth-locked",
+      "auth-checking",
+      "auth-preparing"
+    );
+
+    var gateEl = document.getElementById("auth-gate");
+    if (gateEl) {
+      gateEl.hidden = true;
+      gateEl.classList.add("hidden");
+    }
+
     renderWorkspace(true);
   }
 })();

@@ -336,6 +336,69 @@ function normalizeNodeTimes(data) {
   return out;
 }
 
+/* =========================================================
+ *  🛡️ 遮罩层统一显隐（防御「透明遮罩残留 → 全站按钮点不动」）
+ *
+ *  背景：只要遮罩容器仍处于 display:flex / opacity:0 状态，
+ *  它就会继续参与命中测试，把整页按钮的点击全部吞掉。
+ *  因此所有 Modal / Backdrop 的开关都必须走这里：
+ *  - 打开：清掉 hidden 属性 / .hidden 类 / 内联 display / 内联 pointer-events
+ *  - 关闭：同时设置 hidden 属性 + .hidden 类，并强制 pointer-events: none
+ * ========================================================= */
+
+var MODAL_OVERLAY_IDS = [
+  "modal",
+  "cat-modal",
+  "topic-modal",
+  "zen-modal",
+  "reader-modal",
+  "auth-modal",
+  "list-name-modal",
+  "list-confirm-modal",
+];
+
+function showOverlay(el) {
+  if (!el) return;
+
+  /* 记录打开时刻：UI 自愈逻辑据此跳过入场动画期间的透明帧 */
+  el.__oitreeOpenedAt = Date.now();
+
+  el.classList.remove("hidden");
+  el.removeAttribute("hidden");
+  el.style.removeProperty("display");
+  el.style.removeProperty("pointer-events");
+}
+
+function hideOverlay(el) {
+  if (!el) return;
+
+  el.hidden = true;
+  el.classList.add("hidden");
+
+  /* 双重保险：即使之后有样式把 display 改回 flex，
+   * 关闭态也绝不允许再拦截点击。 */
+  el.style.pointerEvents = "none";
+}
+
+function isOverlayOpen(el) {
+  return !!(el && !el.hidden && !el.classList.contains("hidden"));
+}
+
+function isAnyOverlayOpen(extraIds) {
+  var ids = MODAL_OVERLAY_IDS.concat(extraIds || []);
+  for (var i = 0; i < ids.length; i++) {
+    if (isOverlayOpen(document.getElementById(ids[i]))) return true;
+  }
+  return false;
+}
+
+/* 仅当所有弹窗都真正关闭后才解除页面滚动锁（避免锁残留） */
+function releaseBodyScrollLockIfIdle() {
+  if (isAnyOverlayOpen()) return false;
+  document.body.classList.remove("modal-open");
+  return true;
+}
+
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, "&amp;")

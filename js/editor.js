@@ -582,7 +582,7 @@ window.OITreeEditor = (function () {
       emptyText: "开始输入后，右侧会实时渲染 Markdown、LaTeX 公式与代码",
     });
 
-    zenModal.hidden = false;
+    showOverlay(zenModal);
     document.body.classList.add("modal-open");
 
     requestAnimationFrame(function () {
@@ -596,7 +596,7 @@ window.OITreeEditor = (function () {
   }
 
   function closeZenMode(sync) {
-    if (!zenModal || zenModal.hidden) return;
+    if (!zenModal || !isOverlayOpen(zenModal)) return;
 
     if (sync !== false && zenInput) {
       if (zenSource === "catDesc" && catDescInput) {
@@ -608,17 +608,10 @@ window.OITreeEditor = (function () {
       }
     }
 
-    zenModal.hidden = true;
+    hideOverlay(zenModal);
 
-    var catModalEl = document.getElementById("cat-modal");
-    var readerModalEl = document.getElementById("reader-modal");
-    if (
-      modal.hidden &&
-      (!catModalEl || catModalEl.hidden) &&
-      (!readerModalEl || readerModalEl.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    /* 所有弹窗都关闭后才解除滚动锁，避免状态残留 */
+    releaseBodyScrollLockIfIdle();
 
     if (zenRenderTimer !== null) {
       clearTimeout(zenRenderTimer);
@@ -695,7 +688,7 @@ window.OITreeEditor = (function () {
       });
     }
 
-    readerModal.hidden = false;
+    showOverlay(readerModal);
     document.body.classList.add("modal-open");
 
     requestAnimationFrame(function () {
@@ -704,19 +697,12 @@ window.OITreeEditor = (function () {
   }
 
   function closeReaderModal() {
-    if (!readerModal || readerModal.hidden) return;
+    if (!readerModal || !isOverlayOpen(readerModal)) return;
 
-    readerModal.hidden = true;
+    hideOverlay(readerModal);
 
-    var catModalEl = document.getElementById("cat-modal");
-    var zenModalEl = document.getElementById("zen-modal");
-    if (
-      modal.hidden &&
-      (!catModalEl || catModalEl.hidden) &&
-      (!zenModalEl || zenModalEl.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    /* 所有弹窗都关闭后才解除滚动锁，避免状态残留 */
+    releaseBodyScrollLockIfIdle();
 
     session.readerNode = null;
   }
@@ -725,7 +711,7 @@ window.OITreeEditor = (function () {
     var node = session.readerNode;
     if (!node) return;
 
-    if (readerModal) readerModal.hidden = true;
+    if (readerModal) hideOverlay(readerModal);
     session.readerNode = null;
 
     openProblemModal(node);
@@ -772,7 +758,7 @@ window.OITreeEditor = (function () {
 
     titleInput.classList.remove("is-invalid");
 
-    modal.hidden = false;
+    showOverlay(modal);
     document.body.classList.add("modal-open");
 
     requestAnimationFrame(function () {
@@ -782,23 +768,19 @@ window.OITreeEditor = (function () {
   }
 
   function closeProblemModal() {
-    if (zenModal && !zenModal.hidden) {
+    if (zenModal && isOverlayOpen(zenModal)) {
       if (zenSource === "note") {
         closeZenMode(true);
       } else {
-        zenModal.hidden = true;
+        hideOverlay(zenModal);
       }
     }
 
-    modal.hidden = true;
-    var catModalEl = document.getElementById("cat-modal");
-    var readerModalEl = document.getElementById("reader-modal");
-    if (
-      (!catModalEl || catModalEl.hidden) &&
-      (!readerModalEl || readerModalEl.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    hideOverlay(modal);
+
+    /* 所有弹窗都关闭后才解除滚动锁，避免状态残留 */
+    releaseBodyScrollLockIfIdle();
+
     session.editingNode = null;
     form.reset();
     modalCreateTime.textContent = "";

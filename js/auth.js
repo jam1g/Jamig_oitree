@@ -384,7 +384,7 @@
     clearMessage();
 
     /* 先显示弹窗，再切换到对应视图 */
-    setHidden(dom.modal, false);
+    showOverlay(dom.modal);
     document.body.classList.add("modal-open");
 
     if (ui.view === "activate" && ui.pendingEmail) {
@@ -410,7 +410,7 @@
     /* 强制登录态下禁止任何关闭方式（关闭按钮 / 遮罩 / Esc） */
     if (ui.locked && !force) return;
 
-    setHidden(dom.modal, true);
+    hideOverlay(dom.modal);
 
     var others = ["modal", "cat-modal", "topic-modal", "zen-modal", "reader-modal"];
     var otherOpen = others.some(function (id) {
@@ -418,7 +418,7 @@
       return el && !el.hidden;
     });
 
-    if (!otherOpen) document.body.classList.remove("modal-open");
+    if (!otherOpen) releaseBodyScrollLockIfIdle();
   }
 
   /* =========================================================
@@ -907,25 +907,25 @@
     }
 
     var catModal = $("cat-modal");
-    if (catModal) {
-      catModal.hidden = true;
-      catModal.classList.add("hidden");
-    }
+    if (catModal) hideOverlay(catModal);
 
     var topicModal = $("topic-modal");
-    if (topicModal) {
-      topicModal.hidden = true;
-      topicModal.classList.add("hidden");
-    }
+    if (topicModal) hideOverlay(topicModal);
 
     var drawer = $("drawer");
     if (drawer) drawer.classList.remove("is-open");
 
     var drawerBackdrop = $("drawer-backdrop");
-    if (drawerBackdrop) drawerBackdrop.classList.remove("is-visible");
+    if (drawerBackdrop) {
+      drawerBackdrop.classList.remove("is-visible");
+      drawerBackdrop.style.pointerEvents = "none";
+    }
 
     var drawerToggle = $("drawer-toggle");
     if (drawerToggle) drawerToggle.classList.remove("is-open");
+
+    /* 统一解除滚动锁：任何残留的 modal-open 都会让整页表现异常 */
+    releaseBodyScrollLockIfIdle();
   }
 
   function handleAuthUnavailable(message) {
